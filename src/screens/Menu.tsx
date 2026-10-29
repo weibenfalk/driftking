@@ -13,15 +13,16 @@ interface Props {
   onAttack: () => void;
   onDrift: () => void;
   onGarage: () => void;
+  onOnline: () => void;
   onDaily: () => void;
   onEditor: () => void;
   onSettings: () => void;
 }
 
 const BTN_W = 150;
-const BTN_H = 11;
-const TOP = 66;
-const STEP = 12;
+const BTN_H = 10;
+const TOP = 62;
+const STEP = 11;
 
 export default function Menu(p: Props) {
   const [sel, setSel] = useState(0);
@@ -30,6 +31,7 @@ export default function Menu(p: Props) {
     ['FREE RACE', p.onFree],
     ['TIME ATTACK', p.onAttack],
     ['DRIFT CHALLENGE', p.onDrift],
+    ['PLAY ONLINE', p.onOnline],
     [`GARAGE  $${p.save.money}`, p.onGarage],
     ['DAILY TRACK', p.onDaily],
     ['TRACK EDITOR', p.onEditor],

@@ -277,42 +277,51 @@ export function getLooks(): Look[] {
 /* Cars                                                                */
 /* ------------------------------------------------------------------ */
 
+/** A car at rest at (x, y), pointing along the track. */
+function spawn(world: World, x: number, y: number, look: number, persona: Persona | null, ai: boolean, stats: CarStats): Car {
+  const s0 = world.S[0];
+  return {
+    look,
+    persona,
+    stats,
+    ai,
+    x,
+    y,
+    a: Math.atan2(s0.ty, s0.tx),
+    vx: 0,
+    vy: 0,
+    vf: 0,
+    vr: 0,
+    steer: 0,
+    slide: false,
+    idx: globalIdx(world, x, y),
+    lap: 0,
+    done: false,
+    lane: rnd(-10, 10),
+    laneT: 0,
+    grass: false,
+    glob: 0,
+    draft: 0,
+    boost: 0,
+    hazard: HAZ_NONE,
+  };
+}
+
 /** The AI cars first, then the player in the last grid slot: two columns, staggered, behind the start line. */
 export function createGrid(world: World, field: { look: number; persona: Persona }[], playerLook = 0, playerStats: CarStats = UNIT_STATS): Car[] {
   const s0 = world.S[0];
-  const a0 = Math.atan2(s0.ty, s0.tx);
   const entries = [...field.map((f) => ({ ...f, isAi: true })), { look: playerLook, persona: null, isAi: false }];
   return entries.map(({ look, persona, isAi }, g) => {
     const back = 22 + (g >> 1) * 18 + (g & 1) * 9 + 3;
     const lat = g & 1 ? 12 : -12;
-    const x = s0.x - s0.tx * back + s0.nx * lat;
-    const y = s0.y - s0.ty * back + s0.ny * lat;
-    return {
-      look,
-      persona,
-      stats: isAi ? UNIT_STATS : playerStats,
-      ai: isAi,
-      x,
-      y,
-      a: a0,
-      vx: 0,
-      vy: 0,
-      vf: 0,
-      vr: 0,
-      steer: 0,
-      slide: false,
-      idx: globalIdx(world, x, y),
-      lap: 0,
-      done: false,
-      lane: rnd(-10, 10),
-      laneT: 0,
-      grass: false,
-      glob: 0,
-      draft: 0,
-      boost: 0,
-      hazard: HAZ_NONE,
-    };
+    return spawn(world, s0.x - s0.tx * back + s0.nx * lat, s0.y - s0.ty * back + s0.ny * lat, look, persona, isAi, isAi ? UNIT_STATS : playerStats);
   });
+}
+
+/** Two human cars side by side on the front row (online duel), the host on the left. Both drive the stock car. */
+export function createDuel(world: World, looks: [number, number]): Car[] {
+  const s0 = world.S[0];
+  return looks.map((look, g) => spawn(world, s0.x - s0.tx * 25 + s0.nx * (g ? 12 : -12), s0.y - s0.ty * 25 + s0.ny * (g ? 12 : -12), look, null, false, UNIT_STATS));
 }
 
 /** Sets `c.grass` and returns the heading vectors plus speed split into forward and sideways. */

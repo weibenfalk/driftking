@@ -1,8 +1,11 @@
 import type { GameApi, GameInstance } from '../engine/types';
 import { clamp, formatTime, rnd } from '../engine/util';
 import { AI_PACE, FIELD, aiDrive } from './ai';
-import { checkBoost, collideCars, createGrid, drive, updateDraft } from './car';
-import type { Car, CarStats, Env } from './car';
+import { DNF_AFTER, Interp, PoseHistory, SNAP_EVERY, applyMotion, packCar } from '../net/duel';
+import type { InputMsg, SnapMsg } from '../net/duel';
+import type { Link, Msg } from '../net/link';
+import { carFrame, checkBoost, collideCars, createDuel, createGrid, drive, updateDraft } from './car';
+import type { Car, CarStats, DriveInput, Env } from './car';
 import { LapRecorder, ghostAt, ghostTimeline } from './ghost';
 import { ReplayRecorder } from './replay';
 import type { ReplayData } from './replay';
@@ -60,12 +63,25 @@ export interface GameOptions {
    * No laps, no finish line; the run ends when the clock does.
    */
   drift?: { limit: number; /** Bronze, silver, gold scores, for the HUD's next-target line. */ targets: number[] };
+  /**
+   * Online duel against a friend: two human cars, no AI. The host runs the race and steps both cars; the guest
+   * predicts its own car and is corrected by the host's snapshots (see net/duel.ts). Both drive the stock car.
+   */
+  online?: {
+    link: Link;
+    /** Which race this is on the link (rematches bump it), so stray messages from the last one are ignored. */
+    rid: number;
+    /** Sprite look of the host's car and of the guest's. */
+    looks: [number, number];
+  };
 }
 
 const ordinal = (n: number) => `${n}${['TH', 'ST', 'ND', 'RD'][n % 10 > 3 || Math.floor(n / 10) === 1 ? 0 : n % 10]}`.toUpperCase();
 
 export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): GameInstance {
-  const { onResult, attack } = opts;
+  const { onResult, attack, online } = opts;
+  const role = online?.link.role;
+  const guest = role === 'guest';
   const driftMode = opts.drift;
   const { input, audio } = api;
   const world = getWorld(track);
@@ -143,12 +159,15 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
   };
 
   // race state
-  const grid = createGrid(world, FIELD, opts.car?.look, opts.car?.stats);
+  const grid = online ? createDuel(world, online.looks) : createGrid(world, FIELD, opts.car?.look, opts.car?.stats);
   const cars = attack || driftMode ? grid.filter((c) => !c.ai) : grid;
-  const player = cars.find((c) => !c.ai)!;
+  const player = online ? cars[guest ? 1 : 0] : cars.find((c) => !c.ai)!;
+  const remote = online ? cars[guest ? 0 : 1] : null;
+  /** The car the person at this keyboard drives (until it has finished and coasts). */
+  const human = (c: Car) => c === player && !c.ai;
   // dev shortcut: ?at=<centre-line sample> starts the player part-way round, for looking at the scenery
   const at = Number(new URLSearchParams(location.search).get('at'));
-  if (at > 0 && at < N) {
+  if (at > 0 && at < N && !online) {
     const s = S[at];
     player.x = s.x;
     player.y = s.y;
@@ -157,6 +176,7 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
     player.lap = 1;
   }
   const rec = new ReplayRecorder(cars, player, !!driftMode);
+  let mineDone = false; // the player has crossed the line (the race goes on for the other player in a duel)
   const finishers: Car[] = [];
   let parts: Part[] = [];
   let state: 'race' | 'done' = 'race';
@@ -190,12 +210,26 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
   let goShow = 0;
   let flagT = -1;
   let lastSec = -1;
+  // online duel
+  let firstHomeT = 0; // race clock when the first car crossed the line
+  let peerReady = !online || guest; // host: the guest's game is up
+  let peerGone = false;
+  let gotSnap = false;
+  let seq = 0; // guest: number of the next input tick
+  let ack = 0; // host: last guest input tick stepped
+  let lastSnapAt = 0;
+  let goSeen = false;
+  let hostPos = 1;
+  const inbox: InputMsg[] = [];
+  const interp = new Interp();
+  const hist = new PoseHistory();
+  let netErr = 0; // guest: how far the host said our car was from where we had it, in px (for tests)
 
   const env: Env = {
     world,
     grip: wetGrip,
     bump: (c) => {
-      if (c.ai) return;
+      if (!human(c)) return;
       crash(1);
       loseChain();
     },
@@ -206,7 +240,8 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
   };
 
   const progress = (c: Car) => (c.done ? 1e9 - finishers.indexOf(c) : c.lap * N + c.idx);
-  const position = () => [...cars].sort((a, b) => progress(b) - progress(a)).indexOf(player) + 1;
+  const placeOf = (c: Car) => [...cars].sort((a, b) => progress(b) - progress(a)).indexOf(c) + 1;
+  const position = () => (guest ? hostPos : placeOf(player)); // a guest is told its place by the host
   let lastHud = '';
   function status() {
     const items = [
@@ -241,70 +276,91 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
       if (fw < N / 4 || fw > N - 25) ni = g;
     }
     const step = (((ni - prev) % N) + N) % N;
-    if (step > 0 && step < N / 2 && ni < prev) crossed(c, 1);
-    else if (step >= N / 2 && ni > prev) crossed(c, -1);
+    if (!guest) {
+      // (a guest takes its laps from the host's snapshots)
+      if (step > 0 && step < N / 2 && ni < prev) crossed(c, 1);
+      else if (step >= N / 2 && ni > prev) crossed(c, -1);
+    }
     c.idx = ni;
   }
 
-  // Water or straying too far from the road sends the player back to the last road position, standing still.
-  let safeIdx = player.idx;
-  function recover() {
-    const sf = surfAt(world, player.x, player.y);
+  // Water or straying too far from the road sends a car back to its last road position, standing still.
+  const safeIdx = new Map<Car, number>();
+  function recover(c: Car) {
+    const sf = surfAt(world, c.x, c.y);
     if (sf === ASPHALT || sf === CURB) {
-      safeIdx = player.idx;
+      safeIdx.set(c, c.idx);
       return;
     }
-    const gi = globalIdx(world, player.x, player.y);
+    const gi = globalIdx(world, c.x, c.y);
     const g = S[gi];
-    const far = Math.hypot(player.x - g.x, player.y - g.y) > hw[gi] + OFFROAD;
+    const far = Math.hypot(c.x - g.x, c.y - g.y) > hw[gi] + OFFROAD;
     if (sf !== WATER && !far) return;
-    lapValid = false;
-    const s = S[safeIdx];
-    player.x = s.x;
-    player.y = s.y;
-    player.a = Math.atan2(s.ty, s.tx);
-    player.vx = player.vy = player.vf = player.vr = 0;
-    player.steer = 0;
-    player.slide = false;
-    player.idx = safeIdx;
-    loseChain();
-    // a reset costs two seconds in a race or drift challenge (time attack already voids the lap)
-    if (!attack) raceT += 2;
-    banner = { a: sf === WATER ? 'SPLASH!' : 'OFF TRACK', b: attack ? '' : '+2 SECONDS', t: 40 };
-    audio.noise(0.3, 0.08);
-    for (let i = 0; i < 14; i++) parts.push({ x: player.x, y: player.y, vx: rnd(-1, 1), vy: rnd(-1, 1), life: 25, max: 25, kind: 'dirt' });
+    const s = S[safeIdx.get(c) ?? c.idx];
+    c.x = s.x;
+    c.y = s.y;
+    c.a = Math.atan2(s.ty, s.tx);
+    c.vx = c.vy = c.vf = c.vr = 0;
+    c.steer = 0;
+    c.slide = false;
+    c.idx = safeIdx.get(c) ?? c.idx;
+    if (human(c)) {
+      lapValid = false;
+      loseChain();
+      // a reset costs two seconds in a race or drift challenge (time attack already voids the lap; a duel is decided by
+      // who crosses first, and the trip back is penalty enough)
+      if (!attack && !online) raceT += 2;
+      banner = { a: sf === WATER ? 'SPLASH!' : 'OFF TRACK', b: attack || online ? '' : '+2 SECONDS', t: 40 };
+      audio.noise(0.3, 0.08);
+    }
+    for (let i = 0; i < 14; i++) parts.push({ x: c.x, y: c.y, vx: rnd(-1, 1), vy: rnd(-1, 1), life: 25, max: 25, kind: 'dirt' });
   }
 
   function crossed(c: Car, dir: number) {
     if (dir < 0) {
       c.lap--;
-      if (attack && !c.ai) lapValid = false;
+      if (attack && human(c)) lapValid = false;
       return;
     }
     c.lap++;
     if (driftMode) return; // laps mean nothing in a drift challenge
-    if (attack && !c.ai) {
+    if (attack && human(c)) {
       attackLap();
       return;
     }
-    if (!c.ai) {
-      if (c.lap >= 2) {
-        lapTime = raceT - lapStart;
-        if (bestLap === null || lapTime < bestLap) bestLap = lapTime;
-      }
-      lapStart = raceT; // laps are timed from the line, not from the grid
-    }
+    if (human(c)) newLap(c);
     if (c.done) return;
     if (c.lap > LAPS) {
       c.done = true;
       finishers.push(c);
-      if (!c.ai) finish();
-    } else if (!c.ai && c.lap >= 2 && c.lap < LAPS) {
+      if (online && finishers.length === 1) firstHomeT = raceT;
+      if (human(c)) finish();
+      else if (c === remote) remoteHome();
+    } else if (human(c)) lapBanner(c);
+  }
+
+  /** The player started a lap: time the one that just ended. */
+  function newLap(c: Car) {
+    if (c.lap >= 2) {
+      lapTime = raceT - lapStart;
+      if (bestLap === null || lapTime < bestLap) bestLap = lapTime;
+    }
+    lapStart = raceT; // laps are timed from the line, not from the grid
+  }
+
+  function lapBanner(c: Car) {
+    if (c.lap >= 2 && c.lap < LAPS) {
       banner = { a: `LAP ${c.lap - 1}`, b: formatTime(lapTime), t: 70 };
-    } else if (!c.ai && c.lap === LAPS) {
+    } else if (c.lap === LAPS) {
       banner = { a: 'FINAL LAP', b: `LAP ${c.lap - 1} ${formatTime(lapTime)}`, t: 80 };
       audio.tone(784, 0.1, 'square', 0.04);
     }
+  }
+
+  /** Host: the guest's car crossed the line (or ran out of time). It coasts from here, and the guest is told its place. */
+  function remoteHome() {
+    remote!.ai = true;
+    online!.link.send({ t: 'fin', rid: online!.rid, place: finishers.indexOf(remote!) + 1, time: raceT });
   }
 
   /** Player crossed the line in time attack: close the lap that just ended (if there was one) and start the next. */
@@ -341,21 +397,29 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
     recorder = new LapRecorder();
   }
 
-  function finish() {
+  /** The player crossed the line. A guest is told its place and time by the host. */
+  function finish(told?: { place: number; time: number }) {
     if (chain >= 25) {
       driftTotal += Math.round(chain);
       chain = 0;
     }
-    state = 'done';
-    doneT = 150;
+    mineDone = true;
     flagT = 0;
     player.ai = true;
-    const bonus = driftTotal / 1000;
+    if (told) raceT = told.time;
+    // in a duel the race goes on until the other player is home too, and only the finishing order counts
+    if (!online) {
+      state = 'done';
+      doneT = 150;
+    }
+    const bonus = online ? 0 : driftTotal / 1000;
     const final = Math.max(1, raceT - bonus);
     finalRaw = Math.round(final * 100);
-    const place = finishers.indexOf(player) + 1;
-    onResult?.({ raw: finalRaw, time: raceT, place, drift: driftTotal, bestLap, replay: rec.data() });
-    banner = { a: place === 1 ? 'VICTORY!' : `FINISHED ${ordinal(place)}`, b: `${formatTime(raceT)} - ${bonus.toFixed(2)} S DRIFT`, t: 999 };
+    const place = told ? told.place : finishers.indexOf(player) + 1;
+    onResult?.({ raw: finalRaw, time: raceT, place, drift: driftTotal, bestLap, replay: online ? undefined : rec.data() });
+    banner = online
+      ? { a: place === 1 ? 'VICTORY!' : `FINISHED ${ordinal(place)}`, b: `${formatTime(raceT)}`, t: 999 }
+      : { a: place === 1 ? 'VICTORY!' : `FINISHED ${ordinal(place)}`, b: `${formatTime(raceT)} - ${bonus.toFixed(2)} S DRIFT`, t: 999 };
     api.setScore(finalRaw);
     status();
     [523, 659, 784].forEach((f, i) => audio.tone(f, i === 2 ? 0.3 : 0.15, 'square', 0.05, 0, i * 0.15));
@@ -378,7 +442,7 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
   }
 
   function scoreDrift(dt: number) {
-    if (state !== 'race') return;
+    if (state !== 'race' || mineDone) return;
     const sp = Math.hypot(player.vx, player.vy);
     const ang = Math.abs(Math.atan2(player.vr, Math.max(0.1, player.vf)));
     if (player.slide && player.vf > 1.3 && ang > 0.18) {
@@ -435,14 +499,130 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
     eng.sg.gain.setTargetAtTime(player.slide && !player.grass && state === 'race' ? Math.min(0.07, Math.abs(player.vr) * 0.025) : 0, t, 0.04);
   }
 
+  const ownInput = (): DriveInput => ({ steer: input.axisX(), gas: input.down('up'), brake: input.down('down'), hand: input.down('a') || input.down('b') });
+
+  /** One car for one tick: drive it, then lap tracking, boost strips, hazards, off-track recovery and tyre marks. */
+  function stepCar(c: Car, inp: DriveInput | null, dt: number) {
+    c.boost = Math.max(0, c.boost - dt);
+    if (c.ai) aiDrive(c, dt, env, { player, racing: state === 'race', cars, pace: AI_PACE * (opts.paceScale ?? 1) });
+    else drive(c, inp!, dt, env);
+    trackProgress(c);
+    if (checkBoost(c, world) && human(c)) {
+      popup = { n: 'BOOST!', l: 'FULL POWER', t: 30 };
+      audio.tone(880, 0.12, 'square', 0.04);
+      audio.tone(1320, 0.12, 'square', 0.04, 0, 0.08);
+    }
+    if (human(c) && c.hazard !== lastHazard) {
+      if (c.hazard === HAZ_OIL) popup = { n: 'OIL!', l: 'NO GRIP', t: 40, miss: true };
+      else if (c.hazard === HAZ_PUDDLE) popup = { n: 'WET!', l: 'LESS GRIP', t: 30, miss: true };
+      lastHazard = c.hazard;
+    }
+    if (!c.ai && state === 'race') recover(c);
+    effects(c, dt);
+  }
+
+  /* ---- online duel ---- */
+
+  function onNet(m: Msg) {
+    if (!online || m.rid !== online.rid) return;
+    if (!guest) {
+      if (m.t === 'ready') {
+        if (!peerReady) banner = null;
+        peerReady = true;
+      } else if (m.t === 'in' && inbox.length < 600) inbox.push(m as InputMsg);
+    } else if (m.t === 'snap') onSnap(m as SnapMsg);
+    else if (m.t === 'fin' && !mineDone) finish({ place: m.place, time: m.time });
+  }
+
+  /** Guest: the host's word on where everything is. */
+  function onSnap(m: SnapMsg) {
+    gotSnap = true;
+    hostPos = m.pos;
+    const wasHome = remote!.done;
+    interp.push(m.cars[0], performance.now());
+    applyMotion(remote!, m.cars[0]);
+    if (remote!.done && !wasHome && !mineDone) banner = { a: 'OPPONENT HOME', b: `FINISH IN ${DNF_AFTER} S`, t: 90 };
+    const g = m.cars[1];
+    if (!mineDone) netErr = Math.max(hist.correct(m.k, g, player), 0);
+    if (g[11] !== player.lap) {
+      const up = g[11] > player.lap;
+      player.lap = g[11];
+      if (up && !mineDone && state === 'race') {
+        newLap(player);
+        if (player.lap <= LAPS) lapBanner(player);
+      }
+    }
+    if (m.go) {
+      goSeen = true;
+      if (countT < COUNT) countT = COUNT;
+    } else countT = Math.max(countT, Math.min(m.ct, COUNT - 1));
+    if (m.go && state === 'race') raceT = Math.abs(m.rt - raceT) > 0.25 ? m.rt : raceT + (m.rt - raceT) * 0.1;
+  }
+
+  /** Host: tell the guest where everything is, about 30 times a second. */
+  function sendSnap() {
+    const now = performance.now();
+    if (!online || guest || !peerReady || peerGone || now - lastSnapAt < SNAP_EVERY * 1000) return;
+    lastSnapAt = now;
+    const snap: SnapMsg = { t: 'snap', rid: online.rid, k: ack, rt: raceT, ct: countT, go: countT >= COUNT ? 1 : 0, pos: placeOf(remote!), cars: [packCar(player), packCar(remote!)] };
+    online.link.sendFast(snap);
+  }
+
+  function peerLeft() {
+    peerGone = true;
+    peerReady = true;
+    if (guest) {
+      // the host runs the race, so there is nothing left to drive
+      if (state === 'race') {
+        state = 'done';
+        doneT = 120;
+        if (!mineDone) {
+          mineDone = true;
+          player.ai = true;
+          finalRaw = 0;
+          onResult?.({ raw: 0, time: raceT, place: 0, drift: 0, bestLap });
+          banner = { a: 'CONNECTION LOST', b: '', t: 999 };
+        }
+      }
+    } else {
+      remote!.ai = true; // it coasts to a stop
+      if (!mineDone) banner = { a: 'OPPONENT LEFT', b: '', t: 120 };
+    }
+  }
+
+  if (online) {
+    const offMsg = online.link.onMessage(onNet);
+    const offClose = online.link.onClose(peerLeft);
+    let ping = 0;
+    if (guest) {
+      // tell the host this game is up; repeat until its snapshots arrive, in case the first call was lost
+      const hello = () => online.link.send({ t: 'ready', rid: online.rid });
+      hello();
+      ping = window.setInterval(() => !gotSnap && hello(), 400);
+    }
+    api.onCleanup(() => {
+      offMsg();
+      offClose();
+      clearInterval(ping);
+    });
+  }
+
   function update(sec: number) {
     const dt = Math.min(3, sec * 60);
     shake *= Math.pow(0.88, dt);
     if (flagT >= 0) flagT += dt;
     if (goShow > 0) goShow -= dt;
+    if (!peerReady) {
+      // a host waits on the grid until the guest's game is up
+      banner = { a: 'WAITING', b: 'FOR OPPONENT', t: 999 };
+      engineSound(0);
+      status();
+      return;
+    }
     if (countT < COUNT) {
       // everybody waits on the grid; holding gas revs the engine
       countT += dt;
+      if (guest && !goSeen) countT = Math.min(countT, COUNT - 1); // the host says when the lights go green
       const n = countT >= COUNT ? 4 : countT < 20 ? 0 : countT < 55 ? 1 : countT < 90 ? 2 : 3;
       if (n !== lamps) {
         lamps = n;
@@ -454,6 +634,7 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
       }
       engineSound(input.down('up') ? 1.6 : 0);
       status();
+      sendSnap();
       return;
     }
     if (state === 'race') raceT += sec;
@@ -470,34 +651,49 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
       }
     }
     if (driftMode && state === 'race' && raceT >= driftMode.limit) finishDrift();
-    for (const c of cars) {
-      c.boost = Math.max(0, c.boost - dt);
-      if (c.ai) aiDrive(c, dt, env, { player, racing: state === 'race', cars, pace: AI_PACE * (opts.paceScale ?? 1) });
-      else
-        drive(
-          c,
-          {
-            steer: input.axisX(),
-            gas: input.down('up'),
-            brake: input.down('down'),
-            hand: input.down('a') || input.down('b'),
-          },
-          dt,
-          env,
-        );
-      trackProgress(c);
-      if (checkBoost(c, world) && !c.ai) {
-        popup = { n: 'BOOST!', l: 'FULL POWER', t: 30 };
-        audio.tone(880, 0.12, 'square', 0.04);
-        audio.tone(1320, 0.12, 'square', 0.04, 0, 0.08);
+    if (!online) {
+      for (const c of cars) stepCar(c, c.ai ? null : ownInput(), dt);
+    } else if (guest) {
+      // predict our own car and tell the host what we did; the other car is wherever the host last said, a moment ago
+      if (!player.ai) {
+        const inp = ownInput();
+        seq++;
+        online.link.send({ t: 'in', rid: online.rid, k: seq, dt, s: inp.steer, g: inp.gas ? 1 : 0, b: inp.brake ? 1 : 0, h: inp.hand ? 1 : 0 } satisfies InputMsg);
+        stepCar(player, inp, dt);
+        hist.push(seq, player);
+      } else stepCar(player, null, dt);
+      if (interp.ready) {
+        interp.place(remote!, performance.now());
+        carFrame(remote!, world);
+        effects(remote!, dt);
       }
-      if (!c.ai && c.hazard !== lastHazard) {
-        if (c.hazard === HAZ_OIL) popup = { n: 'OIL!', l: 'NO GRIP', t: 40, miss: true };
-        else if (c.hazard === HAZ_PUDDLE) popup = { n: 'WET!', l: 'LESS GRIP', t: 30, miss: true };
-        lastHazard = c.hazard;
+    } else {
+      // host: our car with our controls, the guest's car one tick per input it sent
+      stepCar(player, player.ai ? null : ownInput(), dt);
+      if (remote!.ai) {
+        inbox.length = 0;
+        stepCar(remote!, null, dt);
+      } else
+        for (const m of inbox.splice(0, 120)) {
+          stepCar(remote!, { steer: m.s, gas: !!m.g, brake: !!m.b, hand: !!m.h }, m.dt);
+          ack = m.k;
+        }
+    }
+    // a duel ends when both players are home, or the loser had its time, or the other one is gone
+    if (online && state === 'race' && mineDone && (remote!.done || peerGone)) {
+      state = 'done';
+      doneT = 120;
+    }
+    if (online && !guest && !peerGone && state === 'race' && finishers.length === 1 && raceT - firstHomeT > DNF_AFTER) {
+      if (!remote!.done) {
+        remote!.done = true;
+        finishers.push(remote!);
+        remoteHome();
+      } else if (!mineDone) {
+        player.done = true;
+        finishers.push(player);
+        finish();
       }
-      if (!c.ai && state === 'race') recover();
-      effects(c, dt);
     }
     collideCars(cars, (a, b, imp) => {
       if ((a === player || b === player) && imp > 0.6 && state === 'race') {
@@ -506,7 +702,7 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
       }
     });
     scoreDrift(dt);
-    if (!attack) rec.tick(raceT + (flagT > 0 ? flagT / 60 : 0));
+    if (!attack && !online) rec.tick(raceT + (flagT > 0 ? flagT / 60 : 0));
     if (attack && player.lap >= 1) recorder.tick(raceT - lapStart, player.x, player.y, player.a);
     for (const q of parts) {
       q.x += q.vx * dt;
@@ -528,6 +724,7 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
     engineSound();
     if (state === 'race') api.setScore(Math.round(raceT * 100));
     status();
+    sendSnap();
   }
 
   const TOP_SPEED = 4.6; // px/frame, a little above what the car reaches on asphalt
@@ -576,5 +773,6 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
 
   return {
     timeUp: () => (state === 'done' ? finalRaw : 15000),
+    inspect: () => ({ cars, player, remote, raceT, state, mineDone, netErr, finishers: finishers.map((c) => cars.indexOf(c)) }),
   };
 }

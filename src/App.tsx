@@ -11,6 +11,7 @@ import { credit, loadSave, withDrift, withLap, withResult, writeSave } from './g
 import type { Save } from './game/save';
 import { DIFFICULTY, loadSettings, writeSettings } from './game/settings';
 import type { Settings as SettingsData } from './game/settings';
+import type { Session } from './net/session';
 import { conditionsFor } from './race/conditions';
 import type { Track } from './race/track';
 import { forgetWorld } from './race/track';
@@ -20,12 +21,13 @@ import { Editor, EditorList } from './screens/Editor';
 import Garage from './screens/Garage';
 import { Career, FreeRace } from './screens/Lists';
 import Menu from './screens/Menu';
+import Online from './screens/Online';
 import RaceScreen from './screens/RaceScreen';
 import Settings from './screens/Settings';
 
-type From = 'career' | 'free' | 'attack' | 'drift' | 'menu' | 'editlist' | 'editor';
-type List = 'free' | 'attacklist' | 'driftlist' | 'editlist' | 'editor' | 'settings';
-type Screen = { k: 'menu' } | { k: 'career' } | { k: List } | { k: 'garage' } | { k: 'race'; track: Track; from: From };
+type From = 'career' | 'free' | 'attack' | 'drift' | 'menu' | 'editlist' | 'editor' | 'online';
+type List = 'free' | 'attacklist' | 'driftlist' | 'editlist' | 'editor' | 'settings' | 'online';
+type Screen = { k: 'menu' } | { k: 'career' } | { k: List } | { k: 'garage' } | { k: 'race'; track: Track; from: From; session?: Session };
 
 const daily = () => allTracks().find((t) => t.id.startsWith('daily-'))!;
 /** A track being test-driven from the editor: never saved, never pays. */
@@ -40,6 +42,7 @@ const listFor: Record<From, Screen> = {
   menu: { k: 'menu' },
   editlist: { k: 'editlist' },
   editor: { k: 'editor' },
+  online: { k: 'menu' },
 };
 
 export default function App() {
@@ -106,6 +109,20 @@ export default function App() {
   const race = (track: Track, from: From) => setScreen({ k: 'race', track, from });
   const menu = () => setScreen({ k: 'menu' });
 
+  if (screen.k === 'online')
+    return (
+      <Online
+        save={save}
+        look={selectedModel(save).look}
+        conditions={(t) => conditionsFor(t, settings)}
+        onStart={(session) => {
+          const track = findTrack(session.trackId);
+          if (!track) return session.link.close();
+          setScreen({ k: 'race', track, from: 'online', session });
+        }}
+        onBack={menu}
+      />
+    );
   if (screen.k === 'settings') return <Settings settings={settings} save={save} onChange={setSettings} onSave={commit} onBack={menu} />;
   if (screen.k === 'garage') return <Garage save={save} onChange={commit} onBack={menu} />;
   if (screen.k === 'career') return <Career save={save} onPick={(t) => race(t, 'career')} onBack={menu} />;
@@ -149,7 +166,7 @@ export default function App() {
       />
     );
   if (screen.k === 'race') {
-    const { from } = screen;
+    const { from, session } = screen;
     const mode = modeOf(from);
     const { track } = screen;
     const noPrize = isCustom(track); // custom tracks pay nothing, or a tiny track could be farmed for money
@@ -160,7 +177,8 @@ export default function App() {
         track={track}
         mode={mode}
         car={{ look: selectedModel(save).look, stats: selectedStats(save) }}
-        conditions={conditionsFor(track, settings)}
+        conditions={session ? session.cond : conditionsFor(track, settings)}
+        online={session}
         paceScale={DIFFICULTY[settings.difficulty].pace * careerPace(track.id)}
         attack={
           mode === 'attack'
@@ -177,6 +195,7 @@ export default function App() {
             : undefined
         }
         onRecord={(t, res) => {
+          if (session) return { medal: 0, isBest: false, payout: { place: 0, medal: 0, drift: 0, total: 0 }, next: null }; // a duel pays nothing and keeps no records
           if (mode === 'drift') {
             const medal = driftMedal(t, res.raw);
             const before = save.driftMode[t.id]?.medal ?? 0;
@@ -194,7 +213,10 @@ export default function App() {
           return { medal, isBest: r.isBest, payout: pay, next: from === 'career' ? nextCareerTrack(next, t) : null };
         }}
         onNext={(t) => race(t, from)}
-        onExit={() => setScreen(listFor[from])}
+        onExit={() => {
+          session?.link.close();
+          setScreen(listFor[from]);
+        }}
       />
     );
   }
@@ -206,6 +228,7 @@ export default function App() {
       onAttack={() => setScreen({ k: 'attacklist' })}
       onDrift={() => setScreen({ k: 'driftlist' })}
       onGarage={() => setScreen({ k: 'garage' })}
+      onOnline={() => setScreen({ k: 'online' })}
       onDaily={() => race(daily(), 'menu')}
       onEditor={() => setScreen({ k: 'editlist' })}
       onSettings={() => setScreen({ k: 'settings' })}

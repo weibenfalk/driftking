@@ -40,6 +40,8 @@ export interface GameInstance {
   /** Called when the time limit runs out. Return the final raw score. */
   timeUp?(): number;
   destroy?(): void;
+  /** Read-only look at the race's state, for tools and tests. */
+  inspect?(): unknown;
 }
 
 export type CreateGame = (api: GameApi) => GameInstance;

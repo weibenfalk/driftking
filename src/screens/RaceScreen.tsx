@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { startRace } from '../engine/host';
 import { DRIFT_LIMIT, MEDAL_NAMES, driftTargets, targets } from '../game/career';
 import type { Mode, Payout } from '../game/economy';
+import type { Session } from '../net/session';
 import { fmt } from '../game/format';
 import type { Attack, Medal } from '../game/save';
 import type { CarStats } from '../race/car';
@@ -22,6 +23,8 @@ export interface Outcome extends RaceResult {
   payout: Payout;
   /** Next track in the career, if this race was part of it. */
   next: Track | null;
+  /** An online duel: no medals or prizes, and a rematch instead of a retry. */
+  online?: boolean;
 }
 
 interface Props {
@@ -34,6 +37,8 @@ interface Props {
   conditions: Conditions;
   /** Multiplier on the AI's pace (difficulty). */
   paceScale: number;
+  /** An online duel against a friend; the connection stays open across rematches. */
+  online?: Session;
   /** Time attack instead of a race: no field, no finish, a ghost of the saved best lap. */
   attack?: { best: Attack | null; onLap: (track: Track, r: LapReport) => { medal: number; earned: number } };
   /** Called once when the player finishes: stores the result and says what it earned. */
@@ -50,6 +55,32 @@ function buttonRect(n: number, i: number) {
   const gap = 4;
   const total = n * w + (n - 1) * gap;
   return { x: Math.round(W / 2 - total / 2 + i * (w + gap)), y: 22 + 126, w, h: 13 };
+}
+
+/** The result panel of an online duel. */
+function drawDuel(ctx: CanvasRenderingContext2D, o: Outcome, labels: string[], sel: number, note: string) {
+  const x = 40;
+  const y = 22;
+  const w = W - 80;
+  ctx.fillStyle = 'rgba(0,0,17,.55)';
+  ctx.fillRect(0, 0, W, H);
+  bevel(ctx, x, y, w, 156, C.navy2);
+  bevel(ctx, x + 3, y + 3, w - 6, 12, C.navy1, true);
+  const lost = o.place === 0;
+  text(ctx, lost ? 'CONNECTION LOST' : o.place === 1 ? 'VICTORY' : `FINISHED ${ordinal(o.place)}`, W / 2, y + 6, lost ? C.red : C.gold, { align: 'center' });
+  if (!lost) {
+    text(ctx, fmt(o.raw), W / 2, y + 28, C.ink, { align: 'center', scale: 3 });
+    text(ctx, o.bestLap !== null ? `BEST LAP ${fmt(o.bestLap * 100)}` : '', W / 2, y + 56, C.dim, { align: 'center', small: true });
+  }
+  bevel(ctx, x + 12, y + 74, w - 24, 34, C.navy1, true);
+  text(ctx, 'ONLINE DUEL', W / 2, y + 82, C.cyan, { align: 'center' });
+  text(ctx, 'NO PRIZE MONEY, NO RECORDS', W / 2, y + 94, C.dim, { align: 'center', small: true });
+  text(ctx, note, W / 2, y + 116, note.startsWith('OPPONENT') ? C.red : C.green, { align: 'center', small: true });
+  labels.forEach((l, i) => {
+    const r = buttonRect(labels.length, i);
+    button(ctx, l, r.x, r.y, r.w, r.h, i === sel);
+  });
+  text(ctx, 'LEFT RIGHT CHOOSE   ENTER GO   OR CLICK', W / 2, y + 144, C.dim, { align: 'center', small: true });
 }
 
 /** The result panel, drawn over the frozen last frame of the race. */
@@ -95,7 +126,7 @@ function drawResult(ctx: CanvasRenderingContext2D, o: Outcome, mode: Mode, track
   text(ctx, 'LEFT RIGHT CHOOSE   ENTER GO   OR CLICK', W / 2, y + 144, C.dim, { align: 'center', small: true });
 }
 
-export default function RaceScreen({ track, mode, attack, car, conditions, paceScale, onRecord, onNext, onExit }: Props) {
+export default function RaceScreen({ track, mode, attack, car, conditions, paceScale, online, onRecord, onNext, onExit }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [run, setRun] = useState(0);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
@@ -115,12 +146,34 @@ export default function RaceScreen({ track, mode, attack, car, conditions, paceS
   paceRef.current = paceScale;
   const attackRef = useRef(attack);
   attackRef.current = attack;
+  // rematch: both players have to ask, then both restart the race on the same connection
+  const [wantRematch, setWantRematch] = useState(false);
+  const [peerRematch, setPeerRematch] = useState(false);
+  const [peerGone, setPeerGone] = useState(false);
+
+  useEffect(() => {
+    if (!online) return;
+    const off = online.link.onMessage((m) => m.t === 'rematch' && setPeerRematch(true));
+    const offClose = online.link.onClose(() => setPeerGone(true));
+    return () => {
+      off();
+      offClose();
+    };
+  }, [online]);
+
+  useEffect(() => {
+    if (!wantRematch || !peerRematch) return;
+    setWantRematch(false);
+    setPeerRematch(false);
+    setRun((n) => n + 1);
+  }, [wantRematch, peerRematch]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     setOutcome(null);
     setReplaying(false);
+    setWantRematch(false);
     frozen.current = null;
     let detail: RaceResult | undefined;
     const race = startRace(
@@ -133,16 +186,18 @@ export default function RaceScreen({ track, mode, attack, car, conditions, paceS
           paceScale: paceRef.current,
           drift: mode === 'drift' ? { limit: DRIFT_LIMIT, targets: Object.values(driftTargets(track)) } : undefined,
           onResult: (r) => (detail = r),
+          online: online && { link: online.link, rid: run, looks: online.looks },
           // read the ref again per lap: the save changes after every lap and a stale closure would overwrite it
           attack: a && { best: a.best, onLap: (r) => attackRef.current?.onLap(track, r) },
         });
       },
       (raw) => {
         const d = detail ?? { raw, time: raw / 100, place: 0, drift: 0, bestLap: null };
-        setOutcome({ ...d, ...record.current(track, d) });
+        setOutcome({ ...d, ...record.current(track, d), online: !!online });
       },
     );
     return () => race.stop();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [run, track, mode]);
 
   // dev shortcut: ?demo=result shows the result panel after a second, to look at it without finishing a race
@@ -204,10 +259,17 @@ export default function RaceScreen({ track, mode, attack, car, conditions, paceS
       };
     }
 
-    const labels = ['RETRY', ...(outcome.replay ? ['REPLAY'] : []), ...(outcome.next ? ['NEXT'] : []), 'MENU'];
+    const duelOver = outcome.online && (peerGone || outcome.place === 0);
+    const labels = outcome.online
+      ? [...(duelOver || wantRematch ? [] : ['REMATCH']), 'MENU']
+      : ['RETRY', ...(outcome.replay ? ['REPLAY'] : []), ...(outcome.next ? ['NEXT'] : []), 'MENU'];
+    const note = duelOver ? 'OPPONENT HAS LEFT' : wantRematch ? 'WAITING FOR THE OTHER PLAYER...' : peerRematch ? 'OPPONENT WANTS A REMATCH' : '';
     const act = (i: number) => {
       const l = labels[i];
-      if (l === 'RETRY') setRun((n) => n + 1);
+      if (l === 'REMATCH') {
+        online?.link.send({ t: 'rematch' });
+        setWantRematch(true);
+      } else if (l === 'RETRY') setRun((n) => n + 1);
       else if (l === 'REPLAY') setReplaying(true);
       else if (l === 'NEXT') onNext(outcome.next!);
       else exit.current();
@@ -223,7 +285,8 @@ export default function RaceScreen({ track, mode, attack, car, conditions, paceS
     let raf = 0;
     const frame = () => {
       ctx.putImageData(img, 0, 0);
-      drawResult(ctx, outcome, mode, track, labels, sel);
+      if (outcome.online) drawDuel(ctx, outcome, labels, sel, note);
+      else drawResult(ctx, outcome, mode, track, labels, sel);
       raf = requestAnimationFrame(frame);
     };
     raf = requestAnimationFrame(frame);
@@ -251,7 +314,7 @@ export default function RaceScreen({ track, mode, attack, car, conditions, paceS
       canvas.removeEventListener('mousemove', onMove);
       canvas.removeEventListener('click', onClick);
     };
-  }, [outcome, replaying, mode, track, onNext]);
+  }, [outcome, replaying, mode, track, onNext, online, wantRematch, peerRematch, peerGone]);
 
   return (
     <Crt>
