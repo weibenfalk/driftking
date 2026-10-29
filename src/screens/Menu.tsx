@@ -44,7 +44,7 @@ export default function Menu(p: Props) {
       copperBackground(ctx);
       stars(ctx, t);
       rasterBars(ctx, t, 28, 10);
-      logo(ctx, 'DRIFT KING', W / 2, 16, 4);
+      logo(ctx, 'DRIFT KING', W / 2, 16, 4, t);
       text(ctx, 'TOP DOWN DRIFT RACING', W / 2, 52, C.cyan, { align: 'center' });
       items.forEach(([label], i) => button(ctx, label, (W - BTN_W) / 2, TOP + i * STEP, BTN_W, BTN_H, i === sel));
       text(ctx, 'UP DOWN SELECT   ENTER GO', W / 2, 165, C.dim, { align: 'center' });

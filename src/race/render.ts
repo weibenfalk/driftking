@@ -11,7 +11,8 @@ import type { World } from './track';
 export const SW = 320;
 export const SH = 200;
 /** Height of the HUD bar along the top. */
-const BAR_H = 14;
+const BAR_H = 16;
+const BAR_BANDS = ['#55b', '#44a', '#449', '#338', '#338', '#227', '#226', '#115'];
 
 export interface Part {
   x: number;
@@ -20,7 +21,7 @@ export interface Part {
   vy: number;
   life: number;
   max: number;
-  kind: 'smoke' | 'dirt' | 'leaf' | 'splash';
+  kind: 'smoke' | 'dirt' | 'leaf' | 'splash' | 'spark';
 }
 export interface Popup {
   n: string;
@@ -72,6 +73,12 @@ export interface View {
   cond: Conditions;
   /** Where the ghost car is this frame (time attack). */
   ghost?: GhostPose | null;
+  /** Camera shake in pixels (decays in the race). */
+  shake?: number;
+  /** Start lights: 0-3 red lamps lit, 4 = green. Undefined when they are not shown. */
+  lights?: number;
+  /** Frames since a race was finished, for the chequered flag. */
+  flag?: number;
 }
 
 /** Owns a private copy of the track bitmap (so skid marks can be painted on it) and draws frames. */
@@ -123,7 +130,7 @@ export function createRenderer(ctx: CanvasRenderingContext2D, world: World) {
     for (let u = -edge; u <= edge; u++) {
       const x = Math.round(s0.x + s0.nx * u - ox);
       const y = Math.round(s0.y + s0.ny * u - oy) - lift;
-      const dark = (Math.floor((u + edge) / 4) & 1) === 0;
+      const dark = ((Math.floor((u + edge) / 4) + Math.floor(performance.now() / 500)) & 1) === 0;
       ctx.fillStyle = dark ? '#111' : '#fff';
       ctx.fillRect(x, y - 1, 1, 4);
       ctx.fillStyle = dark ? '#fff' : '#111';
@@ -132,6 +139,61 @@ export function createRenderer(ctx: CanvasRenderingContext2D, world: World) {
   }
 
   /** One slim bar along the top: clock and race info on the left, speed and drift on the right. */
+  /** Boost strips: the stripes run forwards in steps, like a palette cycle. */
+  function drawBoosts(ox: number, oy: number) {
+    const ph = Math.floor(performance.now() / 70) % 8;
+    for (const p of world.boosts) {
+      if (p.x - ox < -30 || p.x - ox > SW + 30 || p.y - oy < -30 || p.y - oy > SH + 30) continue;
+      const nx = -p.ty;
+      const ny = p.tx;
+      let last = '';
+      for (let u = -14; u <= 14; u += 0.5)
+        for (let v = -12; v <= 12; v += 0.5) {
+          const k = (((v - ph + Math.abs(u) * 0.5 + 100) % 8) + 8) % 8;
+          const c = Math.abs(u) >= 13 || Math.abs(v) >= 11.5 ? '#fd3' : k < 3 ? '#5ef' : k < 4 ? '#27b' : '#124';
+          if (c !== last) ctx.fillStyle = last = c;
+          ctx.fillRect(Math.round(p.x + nx * u + p.tx * v - ox), Math.round(p.y + ny * u + p.ty * v - oy), 1, 1);
+        }
+    }
+  }
+
+  /** Three lamps in a housing under the bar: red one by one, then green. */
+  function drawLights(n: number) {
+    const cx = SW / 2;
+    const y = BAR_H + 5;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(cx - 24, y - 3, 48, 17);
+    ctx.fillStyle = '#99a';
+    ctx.fillRect(cx - 24, y - 3, 48, 1);
+    ctx.fillRect(cx - 24, y - 3, 1, 17);
+    ctx.fillStyle = '#334';
+    ctx.fillRect(cx - 24, y + 13, 48, 1);
+    ctx.fillRect(cx + 23, y - 3, 1, 17);
+    for (let i = 0; i < 3; i++) {
+      const x = cx - 14 + i * 14;
+      const on = n >= 4 || i < n;
+      const col = !on ? '#401010' : n >= 4 ? '#30ff50' : '#ff3020';
+      ctx.fillStyle = col;
+      for (const [dy, x0, w] of [[0, 2, 4], [1, 1, 6], [2, 0, 8], [3, 0, 8], [4, 0, 8], [5, 0, 8], [6, 1, 6], [7, 2, 4]])
+        ctx.fillRect(x - 4 + x0, y + 2 + dy, w, 1);
+      if (on) {
+        ctx.fillStyle = n >= 4 ? '#b0ffc0' : '#ff9a88';
+        ctx.fillRect(x - 2, y + 4, 2, 2);
+      }
+    }
+  }
+
+  /** Chequered band that sweeps in from the left and then waves. */
+  function drawFlag(f: number) {
+    const reach = Math.min(SW, f * 8);
+    for (let x = 0; x < reach; x += 8)
+      for (let row = 0; row < 3; row++) {
+        const wave = Math.round(Math.sin(x * 0.05 - f * 0.12) * 3);
+        ctx.fillStyle = ((x >> 3) + row) & 1 ? '#fff' : '#111';
+        ctx.fillRect(x, 122 + row * 8 + wave, 8, 8);
+      }
+  }
+
   function drawHud(v: View) {
     const h = v.hud;
     const at = h.attack;
@@ -141,19 +203,30 @@ export function createRenderer(ctx: CanvasRenderingContext2D, world: World) {
     const RED = '#ff6a5a';
     const DIM = '#aab0c8';
     const BAR = BAR_H;
+    const now = performance.now();
+    const blink = (hz: number) => Math.floor(now / (500 / hz)) % 2 === 0;
     const sh = { shadow: '#000' };
-    ctx.fillStyle = 'rgba(17,17,51,.85)';
-    ctx.fillRect(0, 0, SW, BAR);
-    ctx.fillStyle = '#aab';
+    // raster bar: hard bands of blue, light edge on top and dark below
+    BAR_BANDS.forEach((c, i) => {
+      ctx.fillStyle = c;
+      ctx.fillRect(0, i * 2, SW, 2);
+    });
+    ctx.fillStyle = '#aac';
     ctx.fillRect(0, 0, SW, 1);
-    ctx.fillStyle = '#113';
+    ctx.fillStyle = '#001';
     ctx.fillRect(0, BAR - 1, SW, 1);
-    // speed gauge as a thin strip under the text, running along the whole bar
-    const SEG = 40;
+    // speed gauge as LED segments along the bottom of the bar
+    const SEG = 39;
     const lit = Math.round(h.speedFrac * SEG);
     for (let i = 0; i < SEG; i++) {
-      ctx.fillStyle = i >= lit ? '#2a2c40' : i < SEG * 0.55 ? '#3cbf5a' : i < SEG * 0.8 ? '#f2c230' : '#e4352b';
-      ctx.fillRect(2 + i * 7.75, BAR - 3, 6, 2);
+      const k = i / SEG;
+      const on = i < lit;
+      const [hi, lo] = k < 0.55 ? ['#7fe89a', '#2fae4c'] : k < 0.8 ? ['#ffe070', '#d8a410'] : ['#ff8070', '#c82a20'];
+      const x = 4 + i * 8;
+      ctx.fillStyle = on ? hi : '#303860';
+      ctx.fillRect(x, BAR - 5, 6, 1);
+      ctx.fillStyle = on ? lo : '#1a1c34';
+      ctx.fillRect(x, BAR - 4, 6, 2);
     }
 
     // right side first, so the left side knows how much room it has
@@ -172,11 +245,11 @@ export function createRenderer(ctx: CanvasRenderingContext2D, world: World) {
     // left side, most important first; anything that would run into the right side is left out
     const items: [string, string][] = [];
     if (h.driftLeft !== undefined) {
-      items.push([formatTime(h.driftLeft), h.driftLeft < 10 ? '#e4352b' : INK]);
+      items.push([formatTime(h.driftLeft), h.driftLeft < 10 ? (blink(h.driftLeft < 5 ? 4 : 2) ? '#ff3020' : INK) : INK]);
       items.push([h.driftNext != null ? `NEXT ${h.driftNext}` : 'GOLD!', GREEN]);
     } else if (at) {
       items.push([formatTime(at.lapT), at.valid ? INK : '#e4352b']);
-      items.push([h.lap < 1 ? 'OUT LAP' : at.valid ? `LAP ${h.lap}` : 'INVALID', at.valid ? GOLD : '#e4352b']);
+      items.push([h.lap < 1 ? 'OUT LAP' : at.valid ? `LAP ${h.lap}` : 'INVALID', at.valid ? GOLD : blink(2) ? '#ff3020' : '#7a1a14']);
       if (at.delta !== null) items.push([`${at.delta > 0 ? '+' : '-'}${Math.abs(at.delta).toFixed(2)}`, at.delta > 0 ? RED : GREEN]);
       if (h.bestLap !== null) items.push([`BEST ${formatTime(h.bestLap)}`, GREEN]);
     } else {
@@ -194,7 +267,7 @@ export function createRenderer(ctx: CanvasRenderingContext2D, world: World) {
     }
 
     // loose notes under the bar
-    if (h.boost) drawText(ctx, 'BOOST', 4, BAR + 3, '#5ae6ff', sh);
+    if (h.boost) drawText(ctx, 'BOOST', 4, BAR + 3, blink(4) ? '#5ae6ff' : '#ffffff', sh);
     else if (h.draft > 0.25) drawText(ctx, 'DRAFT', 4, BAR + 3, DIM, sh);
     if (h.chain > 0) drawText(ctx, `+${Math.round(h.chain)}`, SW - 78, BAR + 3, '#ff9a3a', { align: 'right', ...sh });
     if (at && at.bestDrift !== null) drawText(ctx, `BEST DRIFT ${at.bestDrift}`, 4, BAR + (h.boost || h.draft > 0.25 ? 13 : 3), GREEN, { small: true, ...sh });
@@ -202,10 +275,12 @@ export function createRenderer(ctx: CanvasRenderingContext2D, world: World) {
 
   function draw(v: View) {
     const { cars, player, parts, popup, banner } = v;
-    const ox = Math.round(v.camX - SW / 2);
-    const oy = Math.round(v.camY - SH / 2);
+    const sk = v.shake ?? 0;
+    const ox = Math.round(v.camX - SW / 2) + (sk > 0.5 ? Math.round((Math.random() * 2 - 1) * sk) : 0);
+    const oy = Math.round(v.camY - SH / 2) + (sk > 0.5 ? Math.round((Math.random() * 2 - 1) * sk) : 0);
     ctx.drawImage(canvas, ox, oy, SW, SH, 0, 0, SW, SH);
     drawWater(ox, oy);
+    drawBoosts(ox, oy);
     for (const q of parts) {
       const a = q.life / q.max;
       const x = Math.round(q.x - ox);
@@ -218,6 +293,10 @@ export function createRenderer(ctx: CanvasRenderingContext2D, world: World) {
       } else if (q.kind === 'splash') {
         ctx.globalAlpha = a;
         ctx.fillStyle = '#b8dcf4';
+        ctx.fillRect(x, y, 1, 1);
+      } else if (q.kind === 'spark') {
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = a > 0.5 ? '#fff' : '#ffb030';
         ctx.fillRect(x, y, 1, 1);
       } else if (q.kind === 'dirt') {
         ctx.globalAlpha = 1;
@@ -264,12 +343,15 @@ export function createRenderer(ctx: CanvasRenderingContext2D, world: World) {
       ctx.fillRect(SW - 74 + (((c.x / world.w) * 66 + 1) | 0), BAR_H + 3 + (((c.y / world.h) * 46 + 1) | 0), s, s);
     }
     drawHud(v);
+    if (v.lights !== undefined) drawLights(v.lights);
+    if (v.flag !== undefined) drawFlag(v.flag);
     if (popup) {
       drawText(ctx, popup.n, SW / 2, 24, popup.miss ? '#e4352b' : '#ffd23f', { align: 'center', scale: 3, shadow: '#000' });
       drawText(ctx, popup.l, SW / 2, 47, '#f2f0ea', { align: 'center', shadow: '#000' });
     }
     if (banner) {
-      drawText(ctx, banner.a, SW / 2, 76, '#ffd23f', { align: 'center', scale: 3, shadow: '#000' });
+      const hot = banner.a.startsWith('NEW BEST') || banner.a === 'VICTORY!';
+      drawText(ctx, banner.a, SW / 2, 76, hot && Math.floor(performance.now() / 125) % 2 ? '#7ee0a0' : '#ffd23f', { align: 'center', scale: 3, shadow: '#000' });
       if (banner.b) drawText(ctx, banner.b, SW / 2, 100, '#f2f0ea', { align: 'center', shadow: '#000' });
     }
   }

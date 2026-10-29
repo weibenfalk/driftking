@@ -68,18 +68,27 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
   const LAPS = track.laps;
   const renderer = createRenderer(api.ctx, world);
 
-  // engine sound
+  // engine sound: two looped 4-bit sample voices (like Paula channels) pitched by playbackRate, plus tyre noise
   const eng = (() => {
     const c = audio.ctx;
     const out = audio.out;
     if (!c || !out) return null;
-    const o = c.createOscillator();
-    o.type = 'sawtooth';
-    const o2 = c.createOscillator();
-    o2.type = 'square';
+    const CYCLE = 32;
+    const BASE = 8000 / CYCLE; // pitch of the sample at playbackRate 1
+    const voice = (shape: (i: number) => number) => {
+      const buf = c.createBuffer(1, CYCLE, 8000);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < CYCLE; i++) d[i] = Math.round(shape(i) * 7.5) / 7.5; // 4-bit steps
+      const src = c.createBufferSource();
+      src.buffer = buf;
+      src.loop = true;
+      return src;
+    };
+    const o = voice((i) => (i / CYCLE) * 1.6 - 0.8 + (i % 16 < 5 ? 0.25 : 0)); // buzzy saw
+    const o2 = voice((i) => (i < 11 ? 0.7 : -0.7)); // narrow pulse
     const lp = c.createBiquadFilter();
     lp.type = 'lowpass';
-    lp.frequency.value = 700;
+    lp.frequency.value = 3300; // the A500's output filter
     const eg = c.createGain();
     eg.gain.value = 0;
     o.connect(lp);
@@ -101,7 +110,7 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
     sg.gain.value = 0;
     ns.connect(bp).connect(sg).connect(out);
     ns.start();
-    return { c, o, o2, eg, sg, ns };
+    return { c, o, o2, eg, sg, ns, BASE };
   })();
   api.onCleanup(() => {
     if (!eng) return;
@@ -115,9 +124,17 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
       /* already stopped */
     }
   });
+  let shake = 0;
   const thump = () => {
     audio.tone(70, 0.18, 'sine', 0.25);
     audio.tone(140, 0.08, 'square', 0.05);
+  };
+  /** A hit on the player's car: sparks, a jolt of the camera, the thump. */
+  const crash = (power: number) => {
+    thump();
+    shake = Math.max(shake, Math.min(4, 1.5 + power * 2));
+    for (let i = 0; i < 6 + power * 6; i++)
+      parts.push({ x: player.x + rnd(-4, 4), y: player.y + rnd(-4, 4), vx: rnd(-1.6, 1.6), vy: rnd(-1.6, 1.6), life: 14, max: 14, kind: 'spark' });
   };
 
   // race state
@@ -158,17 +175,24 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
   let lapValid = true;
   const DRIFT_SCALE = Math.pow(track.roadGrip, 1.5); // sliding is easy on slippery roads, so it pays less
   let popup: Popup | null = null;
-  let banner: Banner | null = { a: 'GO!', b: '', t: 50 };
+  let banner: Banner | null = null;
+  // start sequence: lamps light one by one (frames), then green and release
+  const COUNT = 140;
+  let countT = 0;
+  let lamps = 0;
+  let goShow = 0;
+  let flagT = -1;
+  let lastSec = -1;
 
   const env: Env = {
     world,
     bump: (c) => {
       if (c.ai) return;
-      thump();
+      crash(1);
       loseChain();
     },
     treeHit: (t) => {
-      for (let i = 0; i < 8; i++)
+      for (let i = 0; i < 16; i++)
         parts.push({ x: t.x + rnd(-t.r, t.r), y: t.y + rnd(-t.r, t.r), vx: rnd(-0.6, 0.6), vy: rnd(-0.6, 0.6), life: 30, max: 30, kind: t.kind === 'tire' ? 'dirt' : 'leaf' });
     },
   };
@@ -316,6 +340,7 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
     }
     state = 'done';
     doneT = 150;
+    flagT = 0;
     player.ai = true;
     const bonus = driftTotal / 1000;
     const final = Math.max(1, raceT - bonus);
@@ -390,14 +415,52 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
     }
   }
 
+  function engineSound(rev?: number) {
+    if (!eng) return;
+    const sp = rev ?? Math.abs(player.vf);
+    const gear = sp < 1.4 ? sp / 1.4 : sp < 2.6 ? (sp - 1.4) / 1.2 : sp < 3.6 ? (sp - 2.6) / 1 : (sp - 3.6) / 0.8;
+    const f = 55 + gear * 70 + sp * 12;
+    const t = eng.c.currentTime;
+    eng.o.playbackRate.setTargetAtTime(f / eng.BASE, t, 0.05);
+    eng.o2.playbackRate.setTargetAtTime((f * 0.5) / eng.BASE, t, 0.05);
+    eng.eg.gain.setTargetAtTime(api.isPaused() ? 0 : 0.045, t, 0.1);
+    eng.sg.gain.setTargetAtTime(player.slide && !player.grass && state === 'race' ? Math.min(0.07, Math.abs(player.vr) * 0.025) : 0, t, 0.04);
+  }
+
   function update(sec: number) {
     const dt = Math.min(3, sec * 60);
+    shake *= Math.pow(0.88, dt);
+    if (flagT >= 0) flagT += dt;
+    if (goShow > 0) goShow -= dt;
+    if (countT < COUNT) {
+      // everybody waits on the grid; holding gas revs the engine
+      countT += dt;
+      const n = countT >= COUNT ? 4 : countT < 20 ? 0 : countT < 55 ? 1 : countT < 90 ? 2 : 3;
+      if (n !== lamps) {
+        lamps = n;
+        if (n === 4) {
+          audio.tone(880, 0.4, 'square', 0.06);
+          banner = { a: 'GO!', b: '', t: 50 };
+          goShow = 40;
+        } else if (n > 0) audio.tone(440, 0.12, 'square', 0.05);
+      }
+      engineSound(input.down('up') ? 1.6 : 0);
+      status();
+      return;
+    }
     if (state === 'race') raceT += sec;
     else if ((doneT -= dt) <= 0) api.end(finalRaw);
     if (banner && banner.t < 900 && (banner.t -= dt) <= 0) banner = null;
     if (popup && (popup.t -= dt) <= 0 && chain === 0) popup = null;
 
     updateDraft(cars, dt);
+    if (driftMode && state === 'race') {
+      const left = Math.ceil(driftMode.limit - raceT);
+      if (left !== lastSec) {
+        lastSec = left;
+        if (left <= 10 && left > 0) audio.tone(left <= 3 ? 1320 : 990, 0.06, 'square', 0.04);
+      }
+    }
     if (driftMode && state === 'race' && raceT >= driftMode.limit) finishDrift();
     for (const c of cars) {
       c.boost = Math.max(0, c.boost - dt);
@@ -430,7 +493,7 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
     }
     collideCars(cars, (a, b, imp) => {
       if ((a === player || b === player) && imp > 0.6 && state === 'race') {
-        thump();
+        crash(Math.min(1.5, imp));
         loseChain();
       }
     });
@@ -446,23 +509,14 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
     parts = parts.filter((q) => q.life > 0);
     if (parts.length > 500) parts.splice(0, parts.length - 500);
 
-    const tx = player.x + player.vx * 16;
-    const ty = player.y + player.vy * 16;
+    const tx = player.x + clamp(player.vx * 20, -110, 110);
+    const ty = player.y + clamp(player.vy * 20, -64, 64);
     camX += (tx - camX) * Math.min(1, 0.1 * dt);
     camY += (ty - camY) * Math.min(1, 0.1 * dt);
     camX = clamp(camX, SW / 2, world.w - SW / 2);
     camY = clamp(camY, SH / 2, world.h - SH / 2);
 
-    if (eng) {
-      const sp = Math.abs(player.vf);
-      const gear = sp < 1.4 ? sp / 1.4 : sp < 2.6 ? (sp - 1.4) / 1.2 : sp < 3.6 ? (sp - 2.6) / 1 : (sp - 3.6) / 0.8;
-      const f = 55 + gear * 70 + sp * 12;
-      const t = eng.c.currentTime;
-      eng.o.frequency.setTargetAtTime(f, t, 0.05);
-      eng.o2.frequency.setTargetAtTime(f * 0.5, t, 0.05);
-      eng.eg.gain.setTargetAtTime(api.isPaused() ? 0 : 0.045, t, 0.1);
-      eng.sg.gain.setTargetAtTime(player.slide && !player.grass && state === 'race' ? Math.min(0.07, Math.abs(player.vr) * 0.025) : 0, t, 0.04);
-    }
+    engineSound();
     if (state === 'race') api.setScore(Math.round(raceT * 100));
     status();
   }
@@ -481,6 +535,9 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
       cond: opts.conditions ?? { weather: 'clear', time: 'day' },
       camX,
       camY,
+      shake,
+      lights: countT < COUNT || goShow > 0 ? lamps : undefined,
+      flag: flagT >= 0 ? flagT : undefined,
       raceT,
       popup,
       banner,

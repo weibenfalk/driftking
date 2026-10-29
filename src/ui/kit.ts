@@ -104,11 +104,16 @@ export function rasterBars(ctx: CanvasRenderingContext2D, t: number, y0: number,
   }
 }
 
+/** Logo colours there and back again, stepped through over time like an Amiga colour cycle. */
+const LOGO_RAMP = ['#fff', '#ff8', '#fd3', '#fb0', '#f80', '#e50', '#c30'];
+const LOGO_CYCLE = [...LOGO_RAMP, ...LOGO_RAMP.slice(1, -1).reverse()];
+
 const logoCache = new Map<string, HTMLCanvasElement>();
 
 /** Big title text filled with a vertical colour gradient and a hard drop shadow. */
-export function logo(ctx: CanvasRenderingContext2D, s: string, cx: number, y: number, scale: number) {
-  const key = `${s}|${scale}`;
+export function logo(ctx: CanvasRenderingContext2D, s: string, cx: number, y: number, scale: number, t = 0) {
+  const phase = Math.floor(t * 7) % LOGO_CYCLE.length;
+  const key = `${s}|${scale}|${phase}`;
   let c = logoCache.get(key);
   if (!c) {
     const w = textWidth(s, scale) + scale * 2;
@@ -124,12 +129,11 @@ export function logo(ctx: CanvasRenderingContext2D, s: string, cx: number, y: nu
     gc.width = w;
     gc.height = h;
     const gg = gc.getContext('2d')!;
-    const GRAD = ['#fff', '#ff8', '#fd3', '#fb0', '#f80', '#e50', '#c30'];
-    const rowH = (HEIGHT * scale) / GRAD.length;
-    GRAD.forEach((col, i) => {
-      gg.fillStyle = col;
+    const rowH = (HEIGHT * scale) / 7;
+    for (let i = 0; i < 7; i++) {
+      gg.fillStyle = LOGO_CYCLE[(i + phase) % LOGO_CYCLE.length];
       gg.fillRect(0, Math.floor(i * rowH), w, Math.ceil(rowH) + 1);
-    });
+    }
     g.globalCompositeOperation = 'source-in';
     g.drawImage(gc, 0, 0);
     logoCache.set(key, c);
