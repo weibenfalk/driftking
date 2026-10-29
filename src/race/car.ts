@@ -1,8 +1,16 @@
 import { TAU, clamp, rnd, wrapAngle } from '../engine/util';
 import { GRASS, SOLID, WATER, globalIdx, surfAt } from './track';
-import type { Tree, World } from './track';
+import type { Ground, Tree, World } from './track';
 
 export const ROT = 64; // rotation frames per car sprite
+
+/** Off-road physics: top speed, per-frame speed retention, and how much sideways speed survives (lower = more grip). */
+export const GROUNDS: Record<Ground, { maxF: number; drag: number; grip: number; slipGrip: number }> = {
+  grass: { maxF: 2.3, drag: 0.972, grip: 0.84, slipGrip: 0.92 },
+  sand: { maxF: 1.9, drag: 0.962, grip: 0.86, slipGrip: 0.93 },
+  snow: { maxF: 2.6, drag: 0.978, grip: 0.9, slipGrip: 0.955 },
+  mud: { maxF: 1.7, drag: 0.955, grip: 0.82, slipGrip: 0.9 },
+};
 
 export interface Car {
   look: number;
@@ -153,28 +161,31 @@ export function drive(c: Car, inp: DriveInput, dt: number, env: Env) {
   let vf = vf0;
   let vr = vr0;
   const grass = c.grass;
+  const ground = GROUNDS[env.world.track.ground];
+  const roadGrip = env.world.track.roadGrip;
+  const slippery = (g: number) => 1 - (1 - g) * roadGrip; // scale how much sideways speed the tyres remove
   c.steer += (inp.steer - c.steer) * Math.min(1, 0.28 * dt);
   const sp = Math.abs(vf);
   let turn = (c.steer * 0.056 * Math.min(1, sp / 1.1) * (vf >= 0 ? 1 : -1)) / (1 + sp * 0.07);
   if (c.slide) turn *= 1.18;
   if (inp.hand) turn *= 1.55;
   c.a += turn * dt;
-  const maxF = grass ? 2.3 : 4.35;
-  if (inp.gas && vf < maxF) vf += 0.072 * dt * (1 - (0.55 * Math.max(0, vf)) / maxF);
+  const maxF = grass ? ground.maxF : 4.35;
+  if (inp.gas && vf < maxF) vf += 0.072 * (grass ? 1 : 0.6 + 0.4 * roadGrip) * dt * (1 - (0.55 * Math.max(0, vf)) / maxF);
   if (inp.brake) {
     if (vf > 0.2) vf -= 0.13 * dt;
     else if (vf > -1.6) vf -= 0.05 * dt;
   }
-  vf *= Math.pow(grass ? 0.972 : 0.994, dt);
+  vf *= Math.pow(grass ? ground.drag : 0.994, dt);
   if (!inp.gas && !inp.brake) vf *= Math.pow(0.99, dt);
   if (inp.hand) vf *= Math.pow(0.986, dt);
   if (vf > maxF) vf -= (vf - maxF) * 0.05 * dt;
   const slip = Math.abs(vr);
   if (!c.slide && (slip > 0.85 || (inp.hand && sp > 1.4))) c.slide = true;
   if (c.slide && slip < 0.28 && !inp.hand) c.slide = false;
-  let grip = c.slide ? (inp.gas ? 0.952 : 0.935) : 0.79;
-  if (inp.hand) grip = 0.976;
-  if (grass) grip = c.slide ? 0.92 : 0.84;
+  let grip = slippery(c.slide ? (inp.gas ? 0.952 : 0.935) : 0.79);
+  if (inp.hand) grip = slippery(0.976);
+  if (grass) grip = c.slide ? ground.slipGrip : ground.grip;
   const vr2 = vr * Math.pow(grip, dt);
   if (vf > 0) vf += Math.abs(vr - vr2) * (inp.gas ? 0.42 : 0.25);
   vr = vr2;

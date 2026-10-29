@@ -28,6 +28,20 @@ export interface Banner {
   t: number;
 }
 
+/** Numbers the HUD shows. */
+export interface Hud {
+  lap: number;
+  laps: number;
+  pos: number;
+  total: number;
+  kmh: number;
+  /** 0..1 of the top speed, for the gauge. */
+  speedFrac: number;
+  drift: number;
+  chain: number;
+  bestLap: number | null;
+}
+
 /** Everything a frame needs from the race. */
 export interface View {
   cars: Car[];
@@ -38,6 +52,7 @@ export interface View {
   raceT: number;
   popup: Popup | null;
   banner: Banner | null;
+  hud: Hud;
 }
 
 /** Owns a private copy of the track bitmap (so skid marks can be painted on it) and draws frames. */
@@ -54,6 +69,40 @@ export function createRenderer(ctx: CanvasRenderingContext2D, world: World) {
   function skid(x: number, y: number) {
     wctx.fillStyle = 'rgba(30,30,36,.45)';
     wctx.fillRect(x | 0, y | 0, 1, 1);
+  }
+
+  const panel = (x: number, y: number, w: number, h: number) => {
+    ctx.fillStyle = 'rgba(8,8,20,.55)';
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = 'rgba(255,255,255,.18)';
+    ctx.fillRect(x, y, w, 1);
+  };
+
+  function drawHud(v: View) {
+    const h = v.hud;
+    // top left: race time, lap, position
+    panel(2, 2, 64, h.bestLap !== null ? 46 : 38);
+    drawText(ctx, formatTime(v.raceT), 6, 5, '#ffffff', { scale: 2, shadow: '#000' });
+    drawText(ctx, `LAP ${h.lap}/${h.laps}`, 6, 22, '#ffd23f', { shadow: '#000' });
+    drawText(ctx, `POS ${h.pos}/${h.total}`, 6, 30, '#f2f0ea', { shadow: '#000' });
+    if (h.bestLap !== null) drawText(ctx, `BEST ${formatTime(h.bestLap)}`, 6, 38, '#7ee0a0', { shadow: '#000' });
+
+    // bottom left: speed and gauge
+    panel(2, SH - 30, 78, 28);
+    drawText(ctx, String(h.kmh), 6, SH - 27, '#ffffff', { scale: 2, shadow: '#000' });
+    drawText(ctx, 'KMH', 40, SH - 22, '#aab0c8', { shadow: '#000' });
+    const SEG = 18;
+    const lit = Math.round(h.speedFrac * SEG);
+    for (let i = 0; i < SEG; i++) {
+      ctx.fillStyle = i >= lit ? '#2a2c40' : i < SEG * 0.55 ? '#3cbf5a' : i < SEG * 0.8 ? '#f2c230' : '#e4352b';
+      ctx.fillRect(6 + i * 4, SH - 10, 3, 5);
+    }
+
+    // bottom right: drift score and the chain being built
+    panel(SW - 92, SH - 30, 90, 28);
+    drawText(ctx, 'DRIFT', SW - 88, SH - 26, '#aab0c8', { shadow: '#000' });
+    drawText(ctx, String(h.drift), SW - 6, SH - 27, '#ffd23f', { scale: 2, align: 'right', shadow: '#000' });
+    if (h.chain > 0) drawText(ctx, `+${Math.round(h.chain)}`, SW - 6, SH - 12, '#ff9a3a', { align: 'right', shadow: '#000' });
   }
 
   function draw(v: View) {
@@ -105,7 +154,7 @@ export function createRenderer(ctx: CanvasRenderingContext2D, world: World) {
       const s = c.ai && c !== player ? 2 : 3;
       ctx.fillRect(SW - 74 + (((c.x / world.w) * 66 + 1) | 0), 4 + (((c.y / world.h) * 46 + 1) | 0), s, s);
     }
-    drawText(ctx, formatTime(v.raceT), 6, 6, '#ffffff', { scale: 2, shadow: '#000' });
+    drawHud(v);
     if (popup) {
       drawText(ctx, popup.n, SW / 2, 22, popup.miss ? '#e4352b' : '#ffd23f', { align: 'center', scale: 3, shadow: '#000' });
       drawText(ctx, popup.l, SW / 2, 40, '#f2f0ea', { align: 'center', shadow: '#000' });

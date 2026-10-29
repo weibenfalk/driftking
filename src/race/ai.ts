@@ -28,7 +28,7 @@ export function aiDrive(c: Car, dt: number, env: Env, { player, racing }: Rivalr
   const { fx, fy, rx, ry, vf: vf0, vr: vr0 } = carFrame(c, env.world);
   let vf = vf0;
   let vr = vr0;
-  let tgt = (c.ai ? c.skill : 0.85) * aiSpd[c.idx] * (c.grass ? 0.6 : 1);
+  let tgt = (c.ai ? c.skill : 0.85) * aiSpd[c.idx] * (c.grass ? 0.6 : Math.sqrt(env.world.track.roadGrip));
   if (c.ai && racing) {
     const gap = c.lap * N + c.idx - (player.lap * N + player.idx);
     tgt *= clamp(1 - (gap / N) * 0.25, 0.9, 1.05);

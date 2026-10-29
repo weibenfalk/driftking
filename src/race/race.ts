@@ -83,6 +83,9 @@ export function createGame(api: GameApi, track: Track): GameInstance {
   let driftTotal = 0;
   let chain = 0;
   let chainT = 0;
+  let lapStart = 0;
+  let lapTime = 0;
+  let bestLap: number | null = null;
   let popup: Popup | null = null;
   let banner: Banner | null = { a: 'GO!', b: '', t: 50 };
 
@@ -172,13 +175,20 @@ export function createGame(api: GameApi, track: Track): GameInstance {
       return;
     }
     c.lap++;
+    if (!c.ai && c.lap >= 2) {
+      lapTime = raceT - lapStart;
+      lapStart = raceT;
+      if (bestLap === null || lapTime < bestLap) bestLap = lapTime;
+    }
     if (c.done) return;
     if (c.lap > LAPS) {
       c.done = true;
       finishers.push(c);
       if (!c.ai) finish();
+    } else if (!c.ai && c.lap >= 2 && c.lap < LAPS) {
+      banner = { a: `LAP ${c.lap - 1}`, b: formatTime(lapTime), t: 70 };
     } else if (!c.ai && c.lap === LAPS) {
-      banner = { a: 'FINAL LAP', b: '', t: 80 };
+      banner = { a: 'FINAL LAP', b: `LAP ${c.lap - 1} ${formatTime(lapTime)}`, t: 80 };
       audio.tone(784, 0.1, 'square', 0.04);
     }
   }
@@ -308,7 +318,31 @@ export function createGame(api: GameApi, track: Track): GameInstance {
     status();
   }
 
-  const draw = () => renderer.draw({ cars, player, parts, camX, camY, raceT, popup, banner });
+  const TOP_SPEED = 4.6; // px/frame, a little above what the car reaches on asphalt
+  const draw = () => {
+    const sp = Math.hypot(player.vx, player.vy);
+    renderer.draw({
+      cars,
+      player,
+      parts,
+      camX,
+      camY,
+      raceT,
+      popup,
+      banner,
+      hud: {
+        lap: clamp(player.lap, 1, LAPS),
+        laps: LAPS,
+        pos: position(),
+        total: cars.length,
+        kmh: Math.round(sp * 40),
+        speedFrac: clamp(sp / TOP_SPEED, 0, 1),
+        drift: driftTotal,
+        chain,
+        bestLap,
+      },
+    });
+  };
 
   status();
   api.loop(update, draw);

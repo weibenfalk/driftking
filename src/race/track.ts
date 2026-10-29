@@ -2,16 +2,36 @@ import { TAU, clamp, rnd, wrapAngle } from '../engine/util';
 
 type RGB = [number, number, number];
 
-/** Colours that make a track look like somewhere: ground speckle and tree shading. */
+/** Off-road surface. Each one is a different mix of top speed, drag and grip (see `GROUNDS` in car.ts). */
+export type Ground = 'grass' | 'sand' | 'snow' | 'mud';
+
+/** Colours that make a track look like somewhere. */
 export interface Theme {
   grass: { a: RGB; b: RGB; dark: RGB; light: RGB };
-  tree: { shadow: RGB; rim: RGB; light: RGB; dark: RGB; mid: RGB };
+  road: { base: RGB; dark: RGB; light: RGB };
+  curb: [RGB, RGB];
+  /** Shading for round props (trees, cacti, rocks). */
+  prop: { shadow: RGB; rim: RGB; light: RGB; dark: RGB; mid: RGB };
+  water: { deep: RGB; glint: RGB; shore: RGB };
+  /** Roof colours for `building` props. */
+  roofs: RGB[];
+}
+
+export interface Props {
+  /** `round` props are bounced off as circles; `building` props are solid rectangles. */
+  kind: 'round' | 'building';
+  count: number;
+  /** Radius range for round props, half-size range for buildings. */
+  min: number;
+  max: number;
 }
 
 /** Everything that makes one track different from another. `buildWorld(track)` does the rest. */
 export interface Track {
   id: string;
   name: string;
+  /** Environment label shown in menus ("MEADOW", "SNOW", ...). */
+  env: string;
   /** World size in pixels. The camera is 320×200 and scrolls inside it. */
   width: number;
   height: number;
@@ -20,7 +40,11 @@ export interface Track {
   laps: number;
   halfWidth: number; // half road width on the straights
   cornerExtra: number; // how much wider each side gets in the sharpest corners
-  trees: number;
+  props: Props;
+  /** Off-road surface. */
+  ground: Ground;
+  /** Road grip, 1 = asphalt. Lower is slippery (dirt, snow). */
+  roadGrip: number;
   lake?: { x: number; y: number; rx: number; ry: number };
   theme: Theme;
 }
@@ -272,17 +296,17 @@ function paintTerrain(track: Track, S: Sample[], hw: Float32Array) {
       else if (r < 0.09) c = theme.grass.light;
       surf[p] = GRASS;
     } else if (cls === ASPHALT) {
-      c = [84, 86, 98];
+      c = theme.road.base;
       const r = Math.random();
-      if (r < 0.09) c = [74, 76, 88];
-      else if (r < 0.12) c = [98, 100, 112];
+      if (r < 0.09) c = theme.road.dark;
+      else if (r < 0.12) c = theme.road.light;
       surf[p] = ASPHALT;
     } else if (cls === CURB) {
-      c = [216, 50, 42];
+      c = theme.curb[0];
       surf[p] = CURB;
     } else {
-      c = [236, 236, 236];
-      surf[p] = CURB; // the white curb stripe drives like the red one
+      c = theme.curb[1];
+      surf[p] = CURB; // the second curb stripe drives like the first
     }
     d[i] = c[0];
     d[i + 1] = c[1];
@@ -344,8 +368,8 @@ function paintGrandstand(put: Put, s0: Sample, half: number) {
   }
 }
 
-function plantTrees(put: Put, surf: Uint8Array, track: Track) {
-  const { width: WW, height: WH, theme } = track;
+function plantProps(put: Put, surf: Uint8Array, track: Track) {
+  const { width: WW, height: WH, theme, props } = track;
   const trees: Tree[] = [];
   const isClear = (x: number, y: number, r: number) => {
     for (let dy = -r; dy <= r; dy += 3)
@@ -357,16 +381,43 @@ function plantTrees(put: Put, surf: Uint8Array, track: Track) {
       }
     return true;
   };
+  if (props.kind === 'building') {
+    const placed: { x: number; y: number; r: number }[] = [];
+    let tries = 0;
+    while (placed.length < props.count && tries++ < 4000) {
+      const hw = Math.round(rnd(props.min, props.max));
+      const hh = Math.round(rnd(props.min, props.max));
+      const x = Math.round(rnd(20, WW - 20));
+      const y = Math.round(rnd(20, WH - 20));
+      const r = Math.max(hw, hh);
+      if (!isClear(x, y, r + 14)) continue;
+      if (placed.some((p) => Math.hypot(p.x - x, p.y - y) < p.r + r + 10)) continue;
+      placed.push({ x, y, r });
+      const roof = theme.roofs[Math.floor(Math.random() * theme.roofs.length)];
+      const shade = (k: number) => roof.map((v) => clamp(v * k, 0, 255)) as RGB;
+      for (let dy = -hh; dy <= hh; dy++)
+        for (let dx = -hw; dx <= hw; dx++) put(x + dx + 3, y + dy + 3, theme.prop.shadow);
+      for (let dy = -hh; dy <= hh; dy++)
+        for (let dx = -hw; dx <= hw; dx++) {
+          let c = roof;
+          if (dy === -hh || dx === -hw) c = shade(1.25);
+          else if (dy === hh || dx === hw) c = shade(0.7);
+          else if (dx % 6 === 0 && dy % 6 === 0 && Math.abs(dx) < hw - 3 && Math.abs(dy) < hh - 3) c = shade(0.8); // skylights
+          put(x + dx, y + dy, c, SOLID);
+        }
+    }
+    return trees;
+  }
   let tries = 0;
-  while (trees.length < track.trees && tries++ < 4000) {
+  while (trees.length < props.count && tries++ < 4000) {
     const x = rnd(10, WW - 10);
     const y = rnd(10, WH - 10);
-    const r = rnd(5, 8) | 0;
+    const r = rnd(props.min, props.max) | 0;
     if (!isClear(x, y, r + 16)) continue;
     if (trees.some((t) => Math.hypot(t.x - x, t.y - y) < t.r + r + 6)) continue;
     trees.push({ x, y, r });
   }
-  const tc = theme.tree;
+  const tc = theme.prop;
   for (const t of trees) {
     for (let dy = -t.r; dy <= t.r; dy++) for (let dx = -t.r; dx <= t.r; dx++) if (Math.hypot(dx, dy) <= t.r) put(t.x + dx + 3, t.y + dy + 3, tc.shadow);
     for (let dy = -t.r; dy <= t.r; dy++)
@@ -384,6 +435,7 @@ function plantTrees(put: Put, surf: Uint8Array, track: Track) {
 function paintLake(put: Put, surf: Uint8Array, track: Track) {
   const { width: WW, height: WH } = track;
   const { x: lx, y: ly, rx, ry } = track.lake!;
+  const water = track.theme.water;
   const at = (x: number, y: number) => (x < 0 || y < 0 || x >= WW || y >= WH ? GRASS : surf[y * WW + x]);
   for (let dy = -(ry + 8); dy <= ry + 8; dy++)
     for (let dx = -(rx + 5); dx <= rx + 5; dx++) {
@@ -402,7 +454,7 @@ function paintLake(put: Put, surf: Uint8Array, track: Track) {
         if (v === ASPHALT || v === CURB) near = true;
       }
       if (near) continue;
-      const c = e > 0.88 ? [214, 196, 140] : (dx + dy * 3 + ((dy * 7) % 5)) % 17 === 0 ? [140, 200, 240] : [48, 110, 190];
+      const c = e > 0.88 ? water.shore : (dx + dy * 3 + ((dy * 7) % 5)) % 17 === 0 ? water.glint : water.deep;
       put(X, Y, c, e > 0.88 ? GRASS : WATER);
     }
 }
@@ -426,7 +478,7 @@ export function buildWorld(track: Track): World {
   const { img, surf, put } = paintTerrain(track, S, hw);
   paintStart(put, S[0], track.halfWidth);
   paintGrandstand(put, S[0], track.halfWidth);
-  const trees = plantTrees(put, surf, track);
+  const trees = plantProps(put, surf, track);
   if (track.lake) paintLake(put, surf, track);
   const mini = makeMinimap(S, track.width, track.height);
   return { track, w: track.width, h: track.height, S, N, aiSpd, hw, base: img, surf, trees, mini };
