@@ -18,7 +18,7 @@ export function Career({ save, onPick, onBack }: { save: Save; onPick: (t: Track
     return {
       title: cup.name,
       note: open ? `${cupPoints(save, cup)}/12 POINTS` : `LOCKED: ${UNLOCK_POINTS} POINTS IN ${CUPS[i - 1].name}`,
-      rows: cupTracks(cup).map((t) => rowFor('race', save, t, !open)),
+      rows: cupTracks(cup).map((t) => rowFor('race', save, t, !open, true)),
     };
   });
   return <TrackList title="CAREER" groups={groups} onPick={(r) => onPick(r.track)} onBack={onBack} />;

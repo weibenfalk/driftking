@@ -18,6 +18,8 @@ export interface Row {
   /** Money still on offer here. */
   left: number;
   locked: boolean;
+  /** Does this list pay prize money? Only the career does. */
+  pays: boolean;
 }
 
 export interface Group {
@@ -26,22 +28,25 @@ export interface Group {
   rows: Row[];
 }
 
-/** Everything a list needs to show about a track in a mode: best, medal, and money earned / still to earn. */
-export function rowFor(mode: Mode, save: Save, t: Track, locked = false): Row {
+/**
+ * Everything a list needs to show about a track in a mode: best, medal, and money earned / still to earn. Prize money
+ * is only paid in the career (`career`), and never on custom tracks.
+ */
+export function rowFor(mode: Mode, save: Save, t: Track, locked = false, career = false): Row {
   const r = baseRow(mode, save, t, locked);
-  return isCustom(t) ? { ...r, left: 0, sub: `${r.sub} NO PRIZE MONEY` } : r;
+  return career && !isCustom(t) ? { ...r, pays: true } : { ...r, left: 0, pays: false };
 }
 
 function baseRow(mode: Mode, save: Save, t: Track, locked: boolean): Row {
   const earned = save.earned[`${mode}:${t.id}`] ?? 0;
   if (mode === 'attack') {
     const a = save.attack[t.id];
-    return { track: t, medal: a?.medal ?? 0, value: a ? fmt(a.lap) : null, sub: `GOLD LAP ${fmt(lapTargets(t).gold)}`, earned, left: potential('attack', a?.medal ?? 0, !!a), locked };
+    return { track: t, medal: a?.medal ?? 0, value: a ? fmt(a.lap) : null, sub: `GOLD LAP ${fmt(lapTargets(t).gold)}`, earned, left: potential('attack', a?.medal ?? 0, !!a), locked, pays: false };
   }
   if (mode === 'drift') {
     const d = save.driftMode[t.id];
-    return { track: t, medal: d?.medal ?? 0, value: d ? String(d.score) : null, sub: `GOLD ${driftTargets(t).gold} POINTS IN 90 S`, earned, left: potential('drift', d?.medal ?? 0, !!d), locked };
+    return { track: t, medal: d?.medal ?? 0, value: d ? String(d.score) : null, sub: `GOLD ${driftTargets(t).gold} POINTS IN 90 S`, earned, left: potential('drift', d?.medal ?? 0, !!d), locked, pays: false };
   }
   const b = save.best[t.id];
-  return { track: t, medal: b?.medal ?? 0, value: b ? fmt(b.time) : null, sub: `${t.laps} LAPS`, earned, left: potential('race', b?.medal ?? 0, !!b), locked };
+  return { track: t, medal: b?.medal ?? 0, value: b ? fmt(b.time) : null, sub: `${t.laps} LAPS`, earned, left: potential('race', b?.medal ?? 0, !!b), locked, pays: false };
 }

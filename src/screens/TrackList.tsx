@@ -52,7 +52,7 @@ export default function TrackList({ title, groups, onPick, onBack }: Props) {
       copperBackground(ctx);
       header(ctx, title);
       text(ctx, 'TRACK', 22, 27, C.dim, { small: true });
-      text(ctx, 'CAN EARN', 226, 27, C.dim, { align: 'right', small: true });
+      if (rows.some((r) => r.pays)) text(ctx, 'CAN EARN', 226, 27, C.dim, { align: 'right', small: true });
       text(ctx, 'BEST', W - 14, 27, C.dim, { align: 'right', small: true });
       bevel(ctx, 2, LIST_TOP - 3, W - 4, VISIBLE * ROW_H + 5, C.navy1, true);
       lines.slice(top, top + VISIBLE).forEach((l, k) => {
@@ -71,7 +71,7 @@ export default function TrackList({ title, groups, onPick, onBack }: Props) {
         const ink = r.locked ? C.navy3 : on ? C.black : C.ink;
         medalChip(ctx, r.medal, 9, y + 2);
         text(ctx, r.track.name, 22, y + 2, ink, { shadow: on || r.locked ? null : '#000' });
-        text(ctx, r.locked ? '' : r.left > 0 ? `$${r.left}` : 'DONE', 226, y + 2, on ? C.black : C.green, { align: 'right', shadow: on ? null : '#000' });
+        text(ctx, r.locked || !r.pays ? '' : r.left > 0 ? `$${r.left}` : 'DONE', 226, y + 2, on ? C.black : C.green, { align: 'right', shadow: on ? null : '#000' });
         text(ctx, r.value ?? '--', W - 14, y + 2, on ? C.black : C.ink, { align: 'right', shadow: on ? null : '#000' });
       });
       // scroll arrows
@@ -87,8 +87,10 @@ export default function TrackList({ title, groups, onPick, onBack }: Props) {
         drawMap(ctx, r.track.cp, { w: r.track.width, h: r.track.height }, W - 72, H - 32, 66, 26, '#88a', '#334');
         text(ctx, r.track.name, 8, H - 31, C.gold, { scale: 1 });
         text(ctx, `${r.track.env}  ${r.sub}`, 8, H - 22, C.dim, { small: true });
-        text(ctx, `EARNED $${r.earned}`, 8, H - 13, C.green);
-        text(ctx, r.left > 0 ? `UP TO $${r.left} LEFT` : 'ALL EARNED', 76, H - 13, r.left > 0 ? C.green : C.dim);
+        if (r.pays) {
+          text(ctx, `EARNED $${r.earned}`, 8, H - 13, C.green);
+          text(ctx, r.left > 0 ? `UP TO $${r.left} LEFT` : 'ALL EARNED', 76, H - 13, r.left > 0 ? C.green : C.dim);
+        } else text(ctx, 'PRIZE MONEY IS CAREER ONLY', 8, H - 13, C.dim, { small: true });
       }
     },
     key(e) {

@@ -110,15 +110,20 @@ function drawResult(ctx: CanvasRenderingContext2D, o: Outcome, mode: Mode, track
     text(ctx, goals[i], gx + 10, y + 71, C.ink);
   });
   bevel(ctx, x + 12, y + 84, w - 24, 34, C.navy1, true);
-  text(ctx, `+$${o.payout.total}`, W / 2, y + 88, C.green, { align: 'center', scale: 2 });
-  text(
-    ctx,
-    isDrift ? `MEDAL $${o.payout.medal}` : `PLACE $${o.payout.place}  MEDAL $${o.payout.medal}  DRIFT $${o.payout.drift}`,
-    W / 2,
-    y + 106,
-    C.dim,
-    { align: 'center', small: true },
-  );
+  if (o.payout.total === 0) {
+    text(ctx, 'NO PRIZE MONEY', W / 2, y + 90, C.dim, { align: 'center' });
+    text(ctx, 'ONLY THE CAREER PAYS', W / 2, y + 104, C.dim, { align: 'center', small: true });
+  } else {
+    text(ctx, `+$${o.payout.total}`, W / 2, y + 88, C.green, { align: 'center', scale: 2 });
+    text(
+      ctx,
+      isDrift ? `MEDAL $${o.payout.medal}` : `PLACE $${o.payout.place}  MEDAL $${o.payout.medal}  DRIFT $${o.payout.drift}`,
+      W / 2,
+      y + 106,
+      C.dim,
+      { align: 'center', small: true },
+    );
+  }
   labels.forEach((l, i) => {
     const r = buttonRect(labels.length, i);
     button(ctx, l, r.x, r.y, r.w, r.h, i === sel);

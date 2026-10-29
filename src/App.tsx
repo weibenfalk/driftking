@@ -169,7 +169,7 @@ export default function App() {
     const { from, session } = screen;
     const mode = modeOf(from);
     const { track } = screen;
-    const noPrize = isCustom(track); // custom tracks pay nothing, or a tiny track could be farmed for money
+    const noPrize = isCustom(track) || from !== 'career'; // prize money is for the career only (and a tiny custom track could be farmed)
     const prize = DIFFICULTY[settings.difficulty].prize * careerPrize(track.id);
     const keep = track.id !== TEST_ID; // a test drive leaves no records at all
     return (
