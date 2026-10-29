@@ -1,4 +1,4 @@
-import { drawText } from '../engine/pixelfont';
+import { drawText, textWidth } from '../engine/pixelfont';
 import { TAU, formatTime } from '../engine/util';
 import { GHOST_LOOK, ROT, SPRITE, getLooks } from './car';
 import type { Car } from './car';
@@ -10,6 +10,8 @@ import type { World } from './track';
 
 export const SW = 320;
 export const SH = 200;
+/** Height of the HUD bar along the top. */
+const BAR_H = 14;
 
 export interface Part {
   x: number;
@@ -89,18 +91,6 @@ export function createRenderer(ctx: CanvasRenderingContext2D, world: World) {
     wctx.fillRect(x | 0, y | 0, 1, 1);
   }
 
-  /** Amiga-style bevelled box: light edge top and left, dark edge bottom and right. */
-  const panel = (x: number, y: number, w: number, h: number) => {
-    ctx.fillStyle = 'rgba(17,17,51,.82)';
-    ctx.fillRect(x, y, w, h);
-    ctx.fillStyle = '#aab';
-    ctx.fillRect(x, y, w, 1);
-    ctx.fillRect(x, y, 1, h);
-    ctx.fillStyle = '#113';
-    ctx.fillRect(x, y + h - 1, w, 1);
-    ctx.fillRect(x + w - 1, y, 1, h);
-  };
-
   /** Lake sparkle: a few glints that drift across the water in steps, like Amiga palette cycling. */
   function drawWater(ox: number, oy: number) {
     const wb = world.water;
@@ -141,50 +131,73 @@ export function createRenderer(ctx: CanvasRenderingContext2D, world: World) {
     }
   }
 
+  /** One slim bar along the top: clock and race info on the left, speed and drift on the right. */
   function drawHud(v: View) {
     const h = v.hud;
     const at = h.attack;
-    if (h.driftLeft !== undefined) {
-      // drift challenge: clock, score and the next medal to chase
-      panel(2, 2, 64, 38);
-      drawText(ctx, formatTime(h.driftLeft), 6, 5, h.driftLeft < 10 ? '#e4352b' : '#ffffff', { scale: 2, shadow: '#000' });
-      drawText(ctx, `SCORE ${h.drift}`, 6, 22, '#ffd23f', { shadow: '#000' });
-      drawText(ctx, h.driftNext != null ? `NEXT ${h.driftNext}` : 'GOLD!', 6, 30, '#7ee0a0', { shadow: '#000' });
-    } else if (at) {
-      // time attack: lap clock, best lap and the live gap to the ghost
-      panel(2, 2, 64, 46);
-      drawText(ctx, formatTime(at.lapT), 6, 5, at.valid ? '#ffffff' : '#e4352b', { scale: 2, shadow: '#000' });
-      drawText(ctx, h.lap < 1 ? 'OUT LAP' : at.valid ? `LAP ${h.lap}` : 'INVALID LAP', 6, 22, at.valid ? '#ffd23f' : '#e4352b', { shadow: '#000' });
-      drawText(ctx, h.bestLap !== null ? `BEST ${formatTime(h.bestLap)}` : 'BEST --:--.--', 6, 30, '#7ee0a0', { shadow: '#000' });
-      if (at.delta !== null) drawText(ctx, `${at.delta > 0 ? '+' : '-'}${Math.abs(at.delta).toFixed(2)}`, 6, 38, at.delta > 0 ? '#ff6a5a' : '#7ee0a0', { shadow: '#000' });
-    } else {
-      // top left: race time, lap, position
-      panel(2, 2, 64, h.bestLap !== null ? 46 : 38);
-      drawText(ctx, formatTime(v.raceT), 6, 5, '#ffffff', { scale: 2, shadow: '#000' });
-      drawText(ctx, `LAP ${h.lap}/${h.laps}`, 6, 22, '#ffd23f', { shadow: '#000' });
-      drawText(ctx, `POS ${h.pos}/${h.total}`, 6, 30, '#f2f0ea', { shadow: '#000' });
-      if (h.bestLap !== null) drawText(ctx, `BEST ${formatTime(h.bestLap)}`, 6, 38, '#7ee0a0', { shadow: '#000' });
-    }
-
-    // bottom left: speed and gauge
-    panel(2, SH - 30, 78, 28);
-    drawText(ctx, String(h.kmh), 6, SH - 27, '#ffffff', { scale: 2, shadow: '#000' });
-    drawText(ctx, 'KMH', 40, SH - 22, '#aab0c8', { shadow: '#000' });
-    const SEG = 18;
+    const INK = '#ffffff';
+    const GOLD = '#ffd23f';
+    const GREEN = '#7ee0a0';
+    const RED = '#ff6a5a';
+    const DIM = '#aab0c8';
+    const BAR = BAR_H;
+    const sh = { shadow: '#000' };
+    ctx.fillStyle = 'rgba(17,17,51,.85)';
+    ctx.fillRect(0, 0, SW, BAR);
+    ctx.fillStyle = '#aab';
+    ctx.fillRect(0, 0, SW, 1);
+    ctx.fillStyle = '#113';
+    ctx.fillRect(0, BAR - 1, SW, 1);
+    // speed gauge as a thin strip under the text, running along the whole bar
+    const SEG = 40;
     const lit = Math.round(h.speedFrac * SEG);
     for (let i = 0; i < SEG; i++) {
       ctx.fillStyle = i >= lit ? '#2a2c40' : i < SEG * 0.55 ? '#3cbf5a' : i < SEG * 0.8 ? '#f2c230' : '#e4352b';
-      ctx.fillRect(6 + i * 4, SH - 10, 3, 5);
+      ctx.fillRect(2 + i * 7.75, BAR - 3, 6, 2);
     }
 
-    // bottom right: drift score and the chain being built
-    panel(SW - 92, SH - 30, 90, 28);
-    drawText(ctx, at ? 'LAP DRIFT' : h.driftLeft !== undefined ? 'SCORE' : 'DRIFT', SW - 88, SH - 26, '#aab0c8', { shadow: '#000' });
-    drawText(ctx, String(at ? at.lapDrift : h.drift), SW - 6, SH - 27, '#ffd23f', { scale: 2, align: 'right', shadow: '#000' });
-    if (at && at.bestDrift !== null) drawText(ctx, `BEST ${at.bestDrift}`, SW - 88, SH - 12, '#7ee0a0', { shadow: '#000' });
-    if (h.boost) drawText(ctx, 'BOOST', 84, SH - 12, '#5ae6ff', { shadow: '#000' });
-    else if (h.draft > 0.25) drawText(ctx, 'DRAFT', 84, SH - 12, '#aab0c8', { shadow: '#000' });
-    if (h.chain > 0) drawText(ctx, `+${Math.round(h.chain)}`, SW - 6, SH - 12, '#ff9a3a', { align: 'right', shadow: '#000' });
+    // right side first, so the left side knows how much room it has
+    const ty = 3;
+    const drift = String(at ? at.lapDrift : h.drift);
+    let rx = SW - 4;
+    drawText(ctx, drift, rx, ty, GOLD, { align: 'right', ...sh });
+    rx -= textWidth(drift) + 3;
+    drawText(ctx, at ? 'LAP DRIFT' : h.driftLeft !== undefined ? 'SCORE' : 'DRIFT', rx, ty + 2, DIM, { align: 'right', small: true, ...sh });
+    rx -= textWidth(at ? 'LAP DRIFT' : h.driftLeft !== undefined ? 'SCORE' : 'DRIFT', 1, true) + 10;
+    drawText(ctx, 'KMH', rx, ty + 2, DIM, { align: 'right', small: true, ...sh });
+    rx -= textWidth('KMH', 1, true) + 3;
+    drawText(ctx, String(h.kmh), rx, ty, INK, { align: 'right', ...sh });
+    rx -= textWidth(String(h.kmh)) + 10;
+
+    // left side, most important first; anything that would run into the right side is left out
+    const items: [string, string][] = [];
+    if (h.driftLeft !== undefined) {
+      items.push([formatTime(h.driftLeft), h.driftLeft < 10 ? '#e4352b' : INK]);
+      items.push([h.driftNext != null ? `NEXT ${h.driftNext}` : 'GOLD!', GREEN]);
+    } else if (at) {
+      items.push([formatTime(at.lapT), at.valid ? INK : '#e4352b']);
+      items.push([h.lap < 1 ? 'OUT LAP' : at.valid ? `LAP ${h.lap}` : 'INVALID', at.valid ? GOLD : '#e4352b']);
+      if (at.delta !== null) items.push([`${at.delta > 0 ? '+' : '-'}${Math.abs(at.delta).toFixed(2)}`, at.delta > 0 ? RED : GREEN]);
+      if (h.bestLap !== null) items.push([`BEST ${formatTime(h.bestLap)}`, GREEN]);
+    } else {
+      items.push([formatTime(v.raceT), INK]);
+      items.push([`LAP ${h.lap}/${h.laps}`, GOLD]);
+      items.push([`POS ${h.pos}/${h.total}`, '#f2f0ea']);
+      if (h.bestLap !== null) items.push([`BEST ${formatTime(h.bestLap)}`, GREEN]);
+    }
+    let lx = 4;
+    for (const [text, color] of items) {
+      const w = textWidth(text);
+      if (lx + w > rx) continue;
+      drawText(ctx, text, lx, ty, color, sh);
+      lx += w + 9;
+    }
+
+    // loose notes under the bar
+    if (h.boost) drawText(ctx, 'BOOST', 4, BAR + 3, '#5ae6ff', sh);
+    else if (h.draft > 0.25) drawText(ctx, 'DRAFT', 4, BAR + 3, DIM, sh);
+    if (h.chain > 0) drawText(ctx, `+${Math.round(h.chain)}`, SW - 78, BAR + 3, '#ff9a3a', { align: 'right', ...sh });
+    if (at && at.bestDrift !== null) drawText(ctx, `BEST DRIFT ${at.bestDrift}`, 4, BAR + (h.boost || h.draft > 0.25 ? 13 : 3), GREEN, { small: true, ...sh });
   }
 
   function draw(v: View) {
@@ -244,20 +257,20 @@ export function createRenderer(ctx: CanvasRenderingContext2D, world: World) {
       ctx.fillRect(x - 1, y, 3, 1);
       ctx.fillRect(x, y + 1, 1, 1);
     }
-    ctx.drawImage(world.mini, SW - 74, 4);
+    ctx.drawImage(world.mini, SW - 74, BAR_H + 3);
     for (const c of cars) {
       ctx.fillStyle = looks[c.look].col;
       const s = c.ai && c !== player ? 2 : 3;
-      ctx.fillRect(SW - 74 + (((c.x / world.w) * 66 + 1) | 0), 4 + (((c.y / world.h) * 46 + 1) | 0), s, s);
+      ctx.fillRect(SW - 74 + (((c.x / world.w) * 66 + 1) | 0), BAR_H + 3 + (((c.y / world.h) * 46 + 1) | 0), s, s);
     }
     drawHud(v);
     if (popup) {
-      drawText(ctx, popup.n, SW / 2, 22, popup.miss ? '#e4352b' : '#ffd23f', { align: 'center', scale: 3, shadow: '#000' });
-      drawText(ctx, popup.l, SW / 2, 40, '#f2f0ea', { align: 'center', shadow: '#000' });
+      drawText(ctx, popup.n, SW / 2, 24, popup.miss ? '#e4352b' : '#ffd23f', { align: 'center', scale: 3, shadow: '#000' });
+      drawText(ctx, popup.l, SW / 2, 47, '#f2f0ea', { align: 'center', shadow: '#000' });
     }
     if (banner) {
-      drawText(ctx, banner.a, SW / 2, 80, '#ffd23f', { align: 'center', scale: 3, shadow: '#000' });
-      if (banner.b) drawText(ctx, banner.b, SW / 2, 102, '#f2f0ea', { align: 'center', shadow: '#000' });
+      drawText(ctx, banner.a, SW / 2, 76, '#ffd23f', { align: 'center', scale: 3, shadow: '#000' });
+      if (banner.b) drawText(ctx, banner.b, SW / 2, 100, '#f2f0ea', { align: 'center', shadow: '#000' });
     }
   }
 

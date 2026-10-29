@@ -249,7 +249,7 @@ export function parTime(track: Track) {
 }
 
 /** The road widens in corners: how sharply it turns ahead, spread out smoothly. */
-function roadWidths(S: Sample[], half: number, extra: number) {
+export function roadWidths(S: Sample[], half: number, extra: number) {
   const N = S.length;
   const turnRaw = turnAhead(S);
   const turn = new Float32Array(N);

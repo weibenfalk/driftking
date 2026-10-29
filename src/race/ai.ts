@@ -19,11 +19,21 @@ const COAST: Persona = { name: '', skill: 0, corner: 1, aggression: 0, caution: 
 /** The fastest target speed on the track (px/frame); corners subtract from it. See `aiSpeeds` in track.ts. */
 const STRAIGHT = 4.0;
 
+/**
+ * How much faster than the baseline corner-speed profile the AI drives on Normal. Calibrated with a test-driver bot
+ * on the real physics: the bot can hold ~1.4x that profile on dry tarmac and ~1.6x is its limit, but AI cars get
+ * more forgiving grip than the player, so a pace of 1.25 puts the best AI (skill .97) at about a good driver's lap
+ * time and the slowest AI at a beginner's. Easy and Hard scale this (see `DIFFICULTY` in game/settings.ts).
+ */
+export const AI_PACE = 1.25;
+
 /** Race context the AI needs. */
 export interface Rivalry {
   player: Car;
   racing: boolean;
   cars: Car[];
+  /** Overall pace multiplier (`AI_PACE` times the difficulty); defaults to `AI_PACE`. */
+  pace?: number;
 }
 
 /**
@@ -33,7 +43,7 @@ export interface Rivalry {
  *  - brave drivers keep more speed through corners, drifters let the tail slide to do it;
  *  - the rubber band is weak (a few percent) and only trims leaders and helps stragglers.
  */
-export function aiDrive(c: Car, dt: number, env: Env, { player, racing, cars }: Rivalry) {
+export function aiDrive(c: Car, dt: number, env: Env, { player, racing, cars, pace = AI_PACE }: Rivalry) {
   const { S, N, aiSpd } = env.world;
   const p = c.persona ?? COAST;
   const fx0 = Math.cos(c.a);
@@ -77,7 +87,7 @@ export function aiDrive(c: Car, dt: number, env: Env, { player, racing, cars }: 
   let vr = vr0;
 
   const slow = STRAIGHT - aiSpd[c.idx]; // how much the next corner takes off
-  let tgt = p.skill * Math.max(0.5, STRAIGHT - slow / p.corner) * (c.grass ? 0.6 : Math.sqrt(env.world.track.roadGrip));
+  let tgt = p.skill * pace * Math.max(0.5, STRAIGHT - slow / p.corner) * (c.grass ? 0.6 : Math.sqrt(env.world.track.roadGrip));
   if (c.persona && racing) {
     const gap = c.lap * N + c.idx - (player.lap * N + player.idx);
     tgt *= clamp(1 - (gap / N) * 0.12, 0.96, 1.03);

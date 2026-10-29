@@ -172,6 +172,8 @@ function makeFrames(body: string, darkc: string, stripe: string, shape: Shape) {
   const frames: HTMLCanvasElement[] = [];
   const shadows: HTMLCanvasElement[] = [];
   const C = SPRITE / 2;
+  const MATS = 'bdsgkrlw';
+  const votes = new Int8Array(MATS.length);
   for (let k = 0; k < ROT; k++) {
     const th = (k / ROT) * TAU;
     const co = Math.cos(th);
@@ -179,7 +181,7 @@ function makeFrames(body: string, darkc: string, stripe: string, shape: Shape) {
     const mat: string[][] = Array.from({ length: SPRITE }, () => Array<string>(SPRITE).fill('.'));
     for (let oy = 0; oy < SPRITE; oy++)
       for (let ox = 0; ox < SPRITE; ox++) {
-        const votes: Record<string, number> = {};
+        votes.fill(0);
         let n = 0;
         for (const [jx, jy] of [[-0.25, -0.25], [0.25, -0.25], [-0.25, 0.25], [0.25, 0.25]]) {
           const x = ox + 0.5 + jx - C;
@@ -188,12 +190,14 @@ function makeFrames(body: string, darkc: string, stripe: string, shape: Shape) {
           const sy = Math.floor((-x * si + y * co) * 2 + TH / 2);
           const m = sx >= 0 && sy >= 0 && sx < TW && sy < TH ? T[sy][sx] : '.';
           if (m !== '.') {
-            votes[m] = (votes[m] ?? 0) + 1;
+            votes[MATS.indexOf(m)]++;
             n++;
           }
         }
         if (n < 3) continue; // crisp silhouette: at least three of the four samples must hit the car
-        mat[oy][ox] = Object.entries(votes).sort((a, b) => b[1] - a[1])[0][0];
+        let top = 0;
+        for (let q = 1; q < MATS.length; q++) if (votes[q] > votes[top]) top = q;
+        mat[oy][ox] = MATS[top];
       }
     const solid = (x: number, y: number) => x >= 0 && y >= 0 && x < SPRITE && y < SPRITE && mat[y][x] !== '.';
     const f = document.createElement('canvas');

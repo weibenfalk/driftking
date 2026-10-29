@@ -22,11 +22,13 @@ export const MEDAL_NAMES = ['NO MEDAL', 'BRONZE', 'SILVER', 'GOLD'];
 export const UNLOCK_POINTS = 5;
 
 /*
- * Medal targets are multiples of the track's AI-pace time plus a standing-start allowance.
- * They have not been tuned against real laps yet: adjust these three numbers after playing.
+ * Medal targets are fractions of the track's baseline-profile time (`parTime`) plus a standing-start allowance,
+ * fitted to a test-driver bot on the real physics: bronze is about what a careful driver does (1.2x the profile),
+ * silver a good one (1.4x) and gold close to the bot's limit (1.55x).
  */
 const START_ALLOWANCE = 2;
-const FACTORS = { gold: 1.03, silver: 1.12, bronze: 1.25 };
+const FACTORS = { gold: 0.8, silver: 0.87, bronze: 0.97 }; // races: traffic costs a little, so these are looser than the lap factors
+const LAP_FACTORS = { gold: 0.74, silver: 0.8, bronze: 0.9 }; // time attack, one clean lap
 
 const targetCache = new Map<string, { gold: number; silver: number; bronze: number }>();
 
@@ -82,7 +84,7 @@ export function lapTargets(track: Track) {
   if (!t) {
     const lap = parTime(track) / track.laps;
     const at = (f: number) => Math.round(lap * f * 100);
-    lapCache.set(track.id, (t = { gold: at(FACTORS.gold), silver: at(FACTORS.silver), bronze: at(FACTORS.bronze) }));
+    lapCache.set(track.id, (t = { gold: at(LAP_FACTORS.gold), silver: at(LAP_FACTORS.silver), bronze: at(LAP_FACTORS.bronze) }));
   }
   return t;
 }
@@ -93,14 +95,15 @@ export function lapMedal(track: Track, lapRaw: number): Medal {
 }
 
 /*
- * Drift challenge targets scale with track length (more road, more corners in 90 s). Like the other targets these
- * are first guesses and need tuning against real runs.
+ * Drift challenge targets scale with track length (more road, more corners in 90 s) and with road grip. Set from a
+ * handbrake-drifting test bot; a human will differ, so these still want tuning by playing.
  */
-const DRIFT_BASE = { bronze: 600, silver: 1500, gold: 2800 };
+const DRIFT_BASE = { bronze: 1500, silver: 3200, gold: 5200 };
 
 /** Target drift scores. */
 export function driftTargets(track: Track) {
-  const k = trackLength(track) / 3500;
+  // slippery surfaces pay (and allow) far less drift: a test bot scored ~9000 on dry grass but ~1000 on snow
+  const k = (trackLength(track) / 3500) * Math.pow(track.roadGrip, 3);
   const at = (n: number) => Math.round((n * k) / 50) * 50;
   return { bronze: at(DRIFT_BASE.bronze), silver: at(DRIFT_BASE.silver), gold: at(DRIFT_BASE.gold) };
 }

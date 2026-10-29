@@ -1,8 +1,81 @@
-/**
- * 3×5 pixel font for drawing text inside game canvases at native resolution.
- * Covers A–Z, ÅÄÖ, digits and common punctuation. Text is upper-cased.
+/*
+ * Pixel fonts for text inside the game canvas.
+ *
+ * The main font is 5x7 and anti-aliased the way Amiga game fonts often were: the glyph bitmaps are smoothed so that
+ * convex corners step down a tone and concave corners get a faint tone, which rounds the letters without making them
+ * wider. Anti-aliasing here means pixels of 25/50/75% ink that blend with whatever is behind them.
+ *
+ * The small font is a plain 3x5 for places where space is tight. Text is upper-cased; unknown characters are skipped.
  */
-const GLYPHS: Record<string, string> = {
+
+/** 5x7 glyphs, seven rows of five bits. */
+const BIG: Record<string, string[]> = {
+  A: ['01110', '10001', '10001', '11111', '10001', '10001', '10001'],
+  B: ['11110', '10001', '10001', '11110', '10001', '10001', '11110'],
+  C: ['01110', '10001', '10000', '10000', '10000', '10001', '01110'],
+  D: ['11110', '10001', '10001', '10001', '10001', '10001', '11110'],
+  E: ['11111', '10000', '10000', '11110', '10000', '10000', '11111'],
+  F: ['11111', '10000', '10000', '11110', '10000', '10000', '10000'],
+  G: ['01110', '10001', '10000', '10111', '10001', '10001', '01111'],
+  H: ['10001', '10001', '10001', '11111', '10001', '10001', '10001'],
+  I: ['01110', '00100', '00100', '00100', '00100', '00100', '01110'],
+  J: ['00111', '00010', '00010', '00010', '00010', '10010', '01100'],
+  K: ['10001', '10010', '10100', '11000', '10100', '10010', '10001'],
+  L: ['10000', '10000', '10000', '10000', '10000', '10000', '11111'],
+  M: ['10001', '11011', '10101', '10101', '10001', '10001', '10001'],
+  N: ['10001', '11001', '10101', '10011', '10001', '10001', '10001'],
+  O: ['01110', '10001', '10001', '10001', '10001', '10001', '01110'],
+  P: ['11110', '10001', '10001', '11110', '10000', '10000', '10000'],
+  Q: ['01110', '10001', '10001', '10001', '10101', '10010', '01101'],
+  R: ['11110', '10001', '10001', '11110', '10100', '10010', '10001'],
+  S: ['01111', '10000', '10000', '01110', '00001', '00001', '11110'],
+  T: ['11111', '00100', '00100', '00100', '00100', '00100', '00100'],
+  U: ['10001', '10001', '10001', '10001', '10001', '10001', '01110'],
+  V: ['10001', '10001', '10001', '10001', '10001', '01010', '00100'],
+  W: ['10001', '10001', '10001', '10101', '10101', '11011', '10001'],
+  X: ['10001', '10001', '01010', '00100', '01010', '10001', '10001'],
+  Y: ['10001', '10001', '01010', '00100', '00100', '00100', '00100'],
+  Z: ['11111', '00001', '00010', '00100', '01000', '10000', '11111'],
+  Å: ['00100', '01010', '01110', '10001', '11111', '10001', '10001'],
+  Ä: ['01010', '00000', '01110', '10001', '11111', '10001', '10001'],
+  Ö: ['01010', '00000', '01110', '10001', '10001', '10001', '01110'],
+  É: ['00010', '00100', '11111', '10000', '11110', '10000', '11111'],
+  '0': ['01110', '10001', '10011', '10101', '11001', '10001', '01110'],
+  '1': ['00100', '01100', '00100', '00100', '00100', '00100', '01110'],
+  '2': ['01110', '10001', '00001', '00010', '00100', '01000', '11111'],
+  '3': ['11110', '00001', '00001', '01110', '00001', '00001', '11110'],
+  '4': ['00010', '00110', '01010', '10010', '11111', '00010', '00010'],
+  '5': ['11111', '10000', '11110', '00001', '00001', '10001', '01110'],
+  '6': ['00110', '01000', '10000', '11110', '10001', '10001', '01110'],
+  '7': ['11111', '00001', '00010', '00100', '01000', '01000', '01000'],
+  '8': ['01110', '10001', '10001', '01110', '10001', '10001', '01110'],
+  '9': ['01110', '10001', '10001', '01111', '00001', '00010', '01100'],
+  '!': ['00100', '00100', '00100', '00100', '00100', '00000', '00100'],
+  '?': ['01110', '10001', '00001', '00010', '00100', '00000', '00100'],
+  ':': ['00000', '01100', '01100', '00000', '01100', '01100', '00000'],
+  '.': ['00000', '00000', '00000', '00000', '00000', '01100', '01100'],
+  ',': ['00000', '00000', '00000', '00000', '01100', '00100', '01000'],
+  '-': ['00000', '00000', '00000', '11111', '00000', '00000', '00000'],
+  '+': ['00000', '00100', '00100', '11111', '00100', '00100', '00000'],
+  '/': ['00001', '00001', '00010', '00100', '01000', '10000', '10000'],
+  '%': ['11001', '11010', '00010', '00100', '01000', '01011', '10011'],
+  "'": ['00100', '00100', '01000', '00000', '00000', '00000', '00000'],
+  '(': ['00010', '00100', '01000', '01000', '01000', '00100', '00010'],
+  ')': ['01000', '00100', '00010', '00010', '00010', '00100', '01000'],
+  '=': ['00000', '00000', '11111', '00000', '11111', '00000', '00000'],
+  '×': ['00000', '10001', '01010', '00100', '01010', '10001', '00000'],
+  '<': ['00010', '00100', '01000', '10000', '01000', '00100', '00010'],
+  '>': ['01000', '00100', '00010', '00001', '00010', '00100', '01000'],
+  $: ['00100', '01111', '10100', '01110', '00101', '11110', '00100'],
+  '#': ['01010', '01010', '11111', '01010', '11111', '01010', '01010'],
+  '^': ['00100', '01010', '10001', '00000', '00000', '00000', '00000'],
+  _: ['00000', '00000', '00000', '00000', '00000', '00000', '11111'],
+  '*': ['00000', '10101', '01110', '11111', '01110', '10101', '00000'],
+  ' ': ['00000', '00000', '00000', '00000', '00000', '00000', '00000'],
+};
+
+/** 3x5 glyphs for tight spots (the old font). */
+const SMALL: Record<string, string> = {
   A: '010101111101101', B: '110101110101110', C: '011100100100011', D: '110101101101110',
   E: '111100110100111', F: '111100110100100', G: '011100101101011', H: '101101111101101',
   I: '111010010010111', J: '001001001101010', K: '101101110101101', L: '100100100100111',
@@ -17,44 +90,113 @@ const GLYPHS: Record<string, string> = {
   '!': '010010010000010', '?': '110001010000010', ':': '000010000010000', '.': '000000000000010',
   ',': '000000000010100', '-': '000000111000000', '+': '000010111010000', '/': '001001010100100',
   '%': '101001010100101', "'": '010010000000000', '(': '010100100100010', ')': '010001001001010',
-  '=': '000111000111000', '$': '011110010011110', '#': '101111101111101', '^': '010101000000000', '×': '000101010101000', '<': '001010100010001', '>': '100010001010100',
-  ' ': '000000000000000',
+  '=': '000111000111000', '×': '000101010101000', '<': '001010100010001', '>': '100010001010100',
+  $: '011110010011110', '#': '101111101111101', '^': '010101000000000', ' ': '000000000000000',
 };
 
 export interface TextOpts {
   scale?: number;
   align?: 'left' | 'center' | 'right';
   shadow?: string;
+  /** Use the compact 3x5 font. */
+  small?: boolean;
 }
 
-export function textWidth(text: string, scale = 1): number {
-  return text.length ? (text.length * 4 - 1) * scale : 0;
+/** Pixels advance per character (including the gap) and glyph height, at scale 1. */
+export const ADVANCE = 6;
+export const HEIGHT = 7;
+export const SMALL_ADVANCE = 4;
+export const SMALL_HEIGHT = 5;
+
+export function textWidth(text: string, scale = 1, small = false): number {
+  const a = small ? SMALL_ADVANCE : ADVANCE;
+  return text.length ? (text.length * a - 1) * scale : 0;
 }
 
-export function drawText(
-  ctx: CanvasRenderingContext2D,
-  text: string,
-  x: number,
-  y: number,
-  color: string,
-  opts: TextOpts = {},
-): void {
+/**
+ * Smooths a 5x7 bitmap into ink levels (0, .25, .5, .75, 1) with Scale2x: every pixel is doubled, corners that a
+ * diagonal stroke leaves open are filled or cut, and the four sub-pixels are averaged back down.
+ */
+function smooth(rows: string[]): number[][] {
+  const h = rows.length;
+  const w = rows[0].length;
+  const g = (x: number, y: number) => (x < 0 || y < 0 || x >= w || y >= h ? 0 : rows[y][x] === '1' ? 1 : 0);
+  const out: number[][] = [];
+  for (let y = 0; y < h; y++) {
+    const line: number[] = [];
+    for (let x = 0; x < w; x++) {
+      const P = g(x, y);
+      const A = g(x, y - 1);
+      const B = g(x + 1, y);
+      const C = g(x - 1, y);
+      const D = g(x, y + 1);
+      const s1 = C === A && C !== D && A !== B ? A : P;
+      const s2 = A === B && A !== C && B !== D ? B : P;
+      const s3 = D === C && D !== B && C !== A ? C : P;
+      const s4 = B === D && B !== A && D !== C ? D : P;
+      line.push((s1 + s2 + s3 + s4) / 4);
+    }
+    out.push(line);
+  }
+  return out;
+}
+
+const BIG_LEVELS: Record<string, number[][]> = {};
+const glyphCache = new Map<string, HTMLCanvasElement>();
+
+/** A glyph rendered once per character, colour and scale. */
+function glyph(ch: string, color: string, scale: number, small: boolean): HTMLCanvasElement | null {
+  const key = `${small ? 's' : 'b'}${scale}${color}${ch}`;
+  let c = glyphCache.get(key);
+  if (c) return c;
+  const w = small ? 3 : 5;
+  const h = small ? 5 : 7;
+  let levels: number[][];
+  if (small) {
+    const g = SMALL[ch];
+    if (!g) return null;
+    levels = Array.from({ length: 5 }, (_, y) => Array.from({ length: 3 }, (_, x) => (g[y * 3 + x] === '1' ? 1 : 0)));
+  } else {
+    const rows = BIG[ch];
+    if (!rows) return null;
+    levels = BIG_LEVELS[ch] ??= smooth(rows);
+  }
+  c = document.createElement('canvas');
+  c.width = w * scale;
+  c.height = h * scale;
+  const g = c.getContext('2d')!;
+  g.fillStyle = color;
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const v = levels[y][x];
+      if (v <= 0) continue;
+      g.globalAlpha = v;
+      g.fillRect(x * scale, y * scale, scale, scale);
+    }
+  glyphCache.set(key, c);
+  return c;
+}
+
+export function drawText(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, color: string, opts: TextOpts = {}): void {
   const s = opts.scale ?? 1;
+  const small = !!opts.small;
   const str = text.toUpperCase();
+  const adv = (small ? SMALL_ADVANCE : ADVANCE) * s;
   let px = Math.round(x);
-  const w = textWidth(str, s);
+  const w = textWidth(str, s, small);
   if (opts.align === 'center') px = Math.round(x - w / 2);
   else if (opts.align === 'right') px = Math.round(x - w);
   const py = Math.round(y);
-  if (opts.shadow) paint(ctx, str, px + s, py + s, opts.shadow, s);
-  paint(ctx, str, px, py, color, s);
-}
-
-function paint(ctx: CanvasRenderingContext2D, str: string, x: number, y: number, color: string, s: number) {
-  ctx.fillStyle = color;
-  for (const ch of str) {
-    const g = GLYPHS[ch];
-    if (g) for (let i = 0; i < 15; i++) if (g[i] === '1') ctx.fillRect(x + (i % 3) * s, y + Math.floor(i / 3) * s, s, s);
-    x += 4 * s;
-  }
+  const prev = ctx.globalAlpha;
+  const run = (col: string, ox: number, oy: number) => {
+    let cx = px + ox;
+    for (const ch of str) {
+      const g = glyph(ch, col, s, small);
+      if (g) ctx.drawImage(g, cx, py + oy);
+      cx += adv;
+    }
+  };
+  if (opts.shadow) run(opts.shadow, s, s);
+  run(color, 0, 0);
+  ctx.globalAlpha = prev;
 }

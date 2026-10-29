@@ -22,6 +22,14 @@ export interface Payout {
   total: number;
 }
 
+/** Scales every part of a payout (difficulty changes prize money). */
+export function scalePayout(p: Payout, k: number): Payout {
+  const place = Math.round(p.place * k);
+  const medal = Math.round(p.medal * k);
+  const drift = Math.round(p.drift * k);
+  return { place, medal, drift, total: place + medal + drift };
+}
+
 /** Medal bonus for a run: only the step up from the best medal so far is paid. */
 export function medalPay(mode: Mode, before: Medal, after: Medal) {
   return Math.max(0, MEDAL_PAY[mode][after] - MEDAL_PAY[mode][before]);

@@ -51,15 +51,15 @@ export default function TrackList({ title, groups, onPick, onBack }: Props) {
     draw(ctx) {
       copperBackground(ctx);
       header(ctx, title);
-      text(ctx, 'TRACK', 22, 29, C.dim);
-      text(ctx, 'CAN EARN', 236, 29, C.dim, { align: 'right' });
-      text(ctx, 'BEST', W - 8, 29, C.dim, { align: 'right' });
+      text(ctx, 'TRACK', 22, 27, C.dim, { small: true });
+      text(ctx, 'CAN EARN', 226, 27, C.dim, { align: 'right', small: true });
+      text(ctx, 'BEST', W - 14, 27, C.dim, { align: 'right', small: true });
       bevel(ctx, 2, LIST_TOP - 3, W - 4, VISIBLE * ROW_H + 5, C.navy1, true);
       lines.slice(top, top + VISIBLE).forEach((l, k) => {
         const y = LIST_TOP + k * ROW_H;
         if ('head' in l) {
-          text(ctx, l.head.title, 8, y + 3, C.gold);
-          if (l.head.note) text(ctx, l.head.note, W - 8, y + 3, l.head.note.startsWith('LOCKED') ? C.red : C.dim, { align: 'right' });
+          text(ctx, l.head.title, 8, y + 2, C.gold);
+          if (l.head.note) text(ctx, l.head.note, W - 14, y + 2, l.head.note.startsWith('LOCKED') ? C.red : C.dim, { align: 'right' });
           return;
         }
         const r = l.row;
@@ -70,13 +70,14 @@ export default function TrackList({ title, groups, onPick, onBack }: Props) {
         }
         const ink = r.locked ? C.navy3 : on ? C.black : C.ink;
         medalChip(ctx, r.medal, 9, y + 2);
-        text(ctx, r.track.name, 22, y + 3, ink, { shadow: on || r.locked ? null : '#000' });
-        text(ctx, r.locked ? '' : r.left > 0 ? `$${r.left}` : 'DONE', 236, y + 3, on ? C.black : C.green, { align: 'right', shadow: on ? null : '#000' });
-        text(ctx, r.value ?? '--', W - 8, y + 3, on ? C.black : C.ink, { align: 'right', shadow: on ? null : '#000' });
+        text(ctx, r.track.name, 22, y + 2, ink, { shadow: on || r.locked ? null : '#000' });
+        text(ctx, r.locked ? '' : r.left > 0 ? `$${r.left}` : 'DONE', 226, y + 2, on ? C.black : C.green, { align: 'right', shadow: on ? null : '#000' });
+        text(ctx, r.value ?? '--', W - 14, y + 2, on ? C.black : C.ink, { align: 'right', shadow: on ? null : '#000' });
       });
       // scroll arrows
-      if (top > 0) text(ctx, '^', W - 8, LIST_TOP - 1, C.gold, { align: 'right' });
-      if (top + VISIBLE < lines.length) text(ctx, 'V', W - 8, LIST_TOP + VISIBLE * ROW_H - 4, C.gold, { align: 'right' });
+      ctx.fillStyle = C.gold;
+      if (top > 0) for (let k = 0; k < 4; k++) ctx.fillRect(W - 10 + k, LIST_TOP + 2 + (3 - k), 8 - 2 * k, 1);
+      if (top + VISIBLE < lines.length) for (let k = 0; k < 4; k++) ctx.fillRect(W - 10 + k, LIST_TOP + VISIBLE * ROW_H - 7 + k, 8 - 2 * k, 1);
       // detail box
       const r = rows[sel];
       bevel(ctx, 2, H - 36, W - 4, 34, C.navy2);
@@ -85,9 +86,9 @@ export default function TrackList({ title, groups, onPick, onBack }: Props) {
         bevel(ctx, W - 74, H - 34, 70, 30, C.navy0, true);
         drawMap(ctx, r.track.cp, { w: r.track.width, h: r.track.height }, W - 72, H - 32, 66, 26, '#88a', '#334');
         text(ctx, r.track.name, 8, H - 31, C.gold, { scale: 1 });
-        text(ctx, `${r.track.env}  ${r.sub}`, 8, H - 22, C.dim);
+        text(ctx, `${r.track.env}  ${r.sub}`, 8, H - 22, C.dim, { small: true });
         text(ctx, `EARNED $${r.earned}`, 8, H - 13, C.green);
-        text(ctx, r.left > 0 ? `UP TO $${r.left} LEFT` : 'ALL EARNED', 100, H - 13, r.left > 0 ? C.green : C.dim);
+        text(ctx, r.left > 0 ? `UP TO $${r.left} LEFT` : 'ALL EARNED', 76, H - 13, r.left > 0 ? C.green : C.dim);
       }
     },
     key(e) {

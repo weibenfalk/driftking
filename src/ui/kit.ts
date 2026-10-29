@@ -1,4 +1,4 @@
-import { drawText, textWidth } from '../engine/pixelfont';
+import { HEIGHT, drawText, textWidth } from '../engine/pixelfont';
 
 /*
  * Drawing kit for the menus: everything is painted on the same 320x200 canvas, with the same 3x5 pixel font, as the
@@ -30,11 +30,13 @@ export interface TextOpts {
   scale?: number;
   align?: 'left' | 'center' | 'right';
   shadow?: string | null;
+  /** The compact 3x5 font, for tight spots. */
+  small?: boolean;
 }
 
 /** Text with the usual hard black drop shadow. */
 export function text(ctx: CanvasRenderingContext2D, s: string, x: number, y: number, color: string = C.ink, o: TextOpts = {}) {
-  drawText(ctx, s, x, y, color, { scale: o.scale, align: o.align, shadow: o.shadow === null ? undefined : (o.shadow ?? '#000') });
+  drawText(ctx, s, x, y, color, { scale: o.scale, align: o.align, small: o.small, shadow: o.shadow === null ? undefined : (o.shadow ?? '#000') });
 }
 
 export { textWidth };
@@ -55,7 +57,7 @@ export function bevel(ctx: CanvasRenderingContext2D, x: number, y: number, w: nu
 export function button(ctx: CanvasRenderingContext2D, label: string, x: number, y: number, w: number, h: number, on: boolean, disabled = false) {
   bevel(ctx, x, y, w, h, on ? C.orange : C.navy2, on);
   const color = disabled ? C.navy3 : on ? C.black : C.ink;
-  text(ctx, label, x + w / 2, y + Math.floor((h - 5) / 2), color, { align: 'center', shadow: on || disabled ? null : '#000' });
+  text(ctx, label, x + w / 2, y + Math.floor((h - HEIGHT) / 2), color, { align: 'center', shadow: on || disabled ? null : '#000' });
 }
 
 /** Horizontal bands, e.g. a copper bar: `colors` are stacked top to bottom, each `bandH` tall. */
@@ -110,7 +112,7 @@ export function logo(ctx: CanvasRenderingContext2D, s: string, cx: number, y: nu
   let c = logoCache.get(key);
   if (!c) {
     const w = textWidth(s, scale) + scale * 2;
-    const h = 5 * scale + scale * 2;
+    const h = HEIGHT * scale + scale * 2;
     c = document.createElement('canvas');
     c.width = w;
     c.height = h;
@@ -123,7 +125,7 @@ export function logo(ctx: CanvasRenderingContext2D, s: string, cx: number, y: nu
     gc.height = h;
     const gg = gc.getContext('2d')!;
     const GRAD = ['#fff', '#ff8', '#fd3', '#fb0', '#f80', '#e50', '#c30'];
-    const rowH = (5 * scale) / GRAD.length;
+    const rowH = (HEIGHT * scale) / GRAD.length;
     GRAD.forEach((col, i) => {
       gg.fillStyle = col;
       gg.fillRect(0, Math.floor(i * rowH), w, Math.ceil(rowH) + 1);
@@ -165,6 +167,6 @@ export function header(ctx: CanvasRenderingContext2D, title: string, right = 'ES
   bars(ctx, 0, ['#a20', '#e40', '#f80', '#fb0', '#f80', '#e40', '#a20', '#600'], 3);
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 24, W, 1);
-  text(ctx, title, 8, 7, C.ink, { scale: 2, shadow: '#400' });
-  text(ctx, right, W - 6, 10, '#ffd', { align: 'right', shadow: '#400' });
+  text(ctx, title, 8, 5, C.ink, { scale: 2, shadow: '#400' });
+  text(ctx, right, W - 6, 9, '#ffd', { align: 'right', shadow: '#400' });
 }

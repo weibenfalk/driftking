@@ -517,6 +517,52 @@ function plantProps(px: Pix, track: Track, rng: () => number): Tree[] {
   return trees;
 }
 
+/** Colour pairs for advertising hoardings: background and lettering. */
+const ADS: [RGB, RGB][] = [
+  [[221, 51, 34], [255, 255, 255]],
+  [[34, 85, 187], [255, 221, 51]],
+  [[34, 153, 68], [255, 255, 255]],
+  [[255, 153, 0], [17, 17, 34]],
+  [[238, 238, 238], [221, 51, 34]],
+];
+
+/** Advertising boards along the long straights, alternating sides, set back from the curb. Solid, so you can hit them. */
+function paintAds(px: Pix, S: Sample[], hw: Float32Array, turn: Float32Array) {
+  const N = S.length;
+  const LEN = 13;
+  let last = -1e9;
+  let side = 1;
+  let n = 0;
+  for (let i = 40; i < N - 40 && n < 16; i++) {
+    let straight = true;
+    for (let k = -8; k < 24 && straight; k++) if (turn[(i + k + N) % N] > 0.12) straight = false;
+    if (!straight || i - last < 34) continue;
+    const s = S[i];
+    const lat = side * (hw[i] + 17);
+    const cx = s.x + s.nx * lat;
+    const cy = s.y + s.ny * lat;
+    let free = true;
+    for (let u = -LEN - 2; u <= LEN + 2 && free; u += 2)
+      for (let v = -5; v <= 5; v += 2) if (px.at(cx + s.tx * u + s.nx * v, cy + s.ty * u + s.ny * v) !== GRASS) free = false;
+    if (!free) continue;
+    const [bg, fg] = ADS[n % ADS.length];
+    const edge: RGB = shade(bg, 0.4);
+    for (let u = -LEN - 1; u <= LEN + 1; u += 0.5)
+      for (let v = -3; v <= 3; v += 0.5) {
+        const x = cx + s.tx * u + s.nx * v;
+        const y = cy + s.ty * u + s.ny * v;
+        let c: RGB = bg;
+        if (Math.abs(u) > LEN || Math.abs(v) > 2.2) c = edge;
+        else if (Math.abs(v) < 1.1 && Math.floor((u + LEN) / 2) % 2 === 0) c = fg; // a line of lettering
+        px.put(x, y, c, SOLID);
+      }
+    for (let u = -LEN; u <= LEN; u += 0.5) px.darken(cx + s.tx * u + s.nx * 3.6 + 2, cy + s.ty * u + s.ny * 3.6 + 2, 0.6); // shadow
+    last = i;
+    side = -side;
+    n++;
+  }
+}
+
 /** Red and white tyre stacks on the outside of the sharpest corners, where a car that overcooks it ends up. */
 function plantTyres(px: Pix, S: Sample[], hw: Float32Array, turn: Float32Array): Tree[] {
   const N = S.length;
@@ -703,6 +749,7 @@ export function paintWorld(track: Track, S: Sample[], hw: Float32Array, turn: Fl
   const hazard = new Uint8Array(track.width * track.height);
   paintHazards(px, hazard, track, S, hw, boosts.map((b) => b.idx));
   const water = track.lake ? paintLake(px, track) : null;
+  paintAds(px, S, hw, turn);
   const trees = [...plantTyres(px, S, hw, turn), ...plantProps(px, track, rng)];
   quantize(px.d);
   return { img: px.img, surf: px.surf, hazard, trees, boosts: boosts.map((b) => b.pad), water, mini: makeMinimap(S, track) };

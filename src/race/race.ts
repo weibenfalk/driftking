@@ -1,6 +1,6 @@
 import type { GameApi, GameInstance } from '../engine/types';
 import { clamp, formatTime, rnd } from '../engine/util';
-import { FIELD, aiDrive } from './ai';
+import { AI_PACE, FIELD, aiDrive } from './ai';
 import { checkBoost, collideCars, createGrid, drive, updateDraft } from './car';
 import type { Car, CarStats, Env } from './car';
 import { LapRecorder, ghostAt, ghostTimeline } from './ghost';
@@ -34,6 +34,8 @@ export interface LapReport {
 }
 
 export interface GameOptions {
+  /** Multiplier on the AI's pace (the difficulty setting). */
+  paceScale?: number;
   /** Weather and time of day (visual only). Defaults to clear daylight. */
   conditions?: Conditions;
   /** The player's car: sprite look and physics multipliers. Defaults to the stock car. */
@@ -234,7 +236,9 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
     player.slide = false;
     player.idx = safeIdx;
     loseChain();
-    banner = { a: sf === WATER ? 'SPLASH!' : 'OFF TRACK', b: '', t: 40 };
+    // a reset costs two seconds in a race or drift challenge (time attack already voids the lap)
+    if (!attack) raceT += 2;
+    banner = { a: sf === WATER ? 'SPLASH!' : 'OFF TRACK', b: attack ? '' : '+2 SECONDS', t: 40 };
     audio.noise(0.3, 0.08);
     for (let i = 0; i < 14; i++) parts.push({ x: player.x, y: player.y, vx: rnd(-1, 1), vy: rnd(-1, 1), life: 25, max: 25, kind: 'dirt' });
   }
@@ -397,7 +401,7 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
     if (driftMode && state === 'race' && raceT >= driftMode.limit) finishDrift();
     for (const c of cars) {
       c.boost = Math.max(0, c.boost - dt);
-      if (c.ai) aiDrive(c, dt, env, { player, racing: state === 'race', cars });
+      if (c.ai) aiDrive(c, dt, env, { player, racing: state === 'race', cars, pace: AI_PACE * (opts.paceScale ?? 1) });
       else
         drive(
           c,

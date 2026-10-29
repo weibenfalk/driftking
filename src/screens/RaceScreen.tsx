@@ -29,6 +29,8 @@ interface Props {
   car: { look: number; stats: CarStats };
   /** Weather and time of day. */
   conditions: Conditions;
+  /** Multiplier on the AI's pace (difficulty). */
+  paceScale: number;
   /** Time attack instead of a race: no field, no finish, a ghost of the saved best lap. */
   attack?: { best: Attack | null; onLap: (track: Track, r: LapReport) => { medal: number; earned: number } };
   /** Called once when the player finishes: stores the result and says what it earned. */
@@ -51,38 +53,38 @@ function drawResult(ctx: CanvasRenderingContext2D, o: Outcome, mode: Mode, track
   bevel(ctx, x + 3, y + 3, w - 6, 12, C.navy1, true);
   text(ctx, isDrift ? 'TIME UP' : o.place === 1 ? 'VICTORY' : `FINISHED ${ordinal(o.place)}`, W / 2, y + 6, C.gold, { align: 'center' });
   text(ctx, isDrift ? `${o.raw} PTS` : fmt(o.raw), W / 2, y + 22, C.ink, { align: 'center', scale: 3 });
-  medalChip(ctx, o.medal, W / 2 - 38, y + 46);
-  text(ctx, MEDAL_NAMES[o.medal], W / 2 - 28, y + 47, C.ink);
-  if (o.isBest) text(ctx, 'NEW BEST', W / 2 + 16, y + 47, C.green);
+  medalChip(ctx, o.medal, W / 2 - 40, y + 47);
+  text(ctx, MEDAL_NAMES[o.medal], W / 2 - 28, y + 46, C.ink);
+  if (o.isBest) text(ctx, 'NEW BEST', W / 2 + 36, y + 46, C.green);
   if (!isDrift) {
-    text(ctx, `TIME ${fmt(o.time * 100)}   DRIFT ${o.drift}${o.bestLap !== null ? `   BEST LAP ${fmt(o.bestLap * 100)}` : ''}`, W / 2, y + 58, C.dim, { align: 'center' });
+    text(ctx, `TIME ${fmt(o.time * 100)}  DRIFT ${o.drift}${o.bestLap !== null ? `  BEST LAP ${fmt(o.bestLap * 100)}` : ''}`, W / 2, y + 60, C.dim, { align: 'center', small: true });
   }
   const t = targets(track);
   const d = driftTargets(track);
   const goals = isDrift ? [d.gold, d.silver, d.bronze].map(String) : [t.gold, t.silver, t.bronze].map(fmt);
   [3, 2, 1].forEach((m, i) => {
     const gx = x + 34 + i * 62;
-    medalChip(ctx, m, gx, y + 71);
-    text(ctx, goals[i], gx + 10, y + 72, C.ink);
+    medalChip(ctx, m, gx, y + 72);
+    text(ctx, goals[i], gx + 10, y + 71, C.ink);
   });
-  bevel(ctx, x + 12, y + 86, w - 24, 26, C.navy1, true);
-  text(ctx, `+$${o.payout.total}`, W / 2, y + 90, C.green, { align: 'center', scale: 2 });
+  bevel(ctx, x + 12, y + 84, w - 24, 34, C.navy1, true);
+  text(ctx, `+$${o.payout.total}`, W / 2, y + 88, C.green, { align: 'center', scale: 2 });
   text(
     ctx,
     isDrift ? `MEDAL $${o.payout.medal}` : `PLACE $${o.payout.place}  MEDAL $${o.payout.medal}  DRIFT $${o.payout.drift}`,
     W / 2,
-    y + 104,
+    y + 106,
     C.dim,
-    { align: 'center' },
+    { align: 'center', small: true },
   );
   const bw = 66;
   const gap = 6;
   const total = labels.length * bw + (labels.length - 1) * gap;
-  labels.forEach((l, i) => button(ctx, l, W / 2 - total / 2 + i * (bw + gap), y + 124, bw, 13, i === sel));
-  text(ctx, 'LEFT RIGHT CHOOSE   ENTER GO', W / 2, y + 143, C.dim, { align: 'center' });
+  labels.forEach((l, i) => button(ctx, l, W / 2 - total / 2 + i * (bw + gap), y + 126, bw, 13, i === sel));
+  text(ctx, 'LEFT RIGHT CHOOSE   ENTER GO', W / 2, y + 144, C.dim, { align: 'center', small: true });
 }
 
-export default function RaceScreen({ track, mode, attack, car, conditions, onRecord, onNext, onExit }: Props) {
+export default function RaceScreen({ track, mode, attack, car, conditions, paceScale, onRecord, onNext, onExit }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [run, setRun] = useState(0);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
@@ -94,6 +96,8 @@ export default function RaceScreen({ track, mode, attack, car, conditions, onRec
   carRef.current = car;
   const condRef = useRef(conditions);
   condRef.current = conditions;
+  const paceRef = useRef(paceScale);
+  paceRef.current = paceScale;
   const attackRef = useRef(attack);
   attackRef.current = attack;
 
@@ -109,6 +113,7 @@ export default function RaceScreen({ track, mode, attack, car, conditions, onRec
         return createGame(api, track, {
           car: carRef.current,
           conditions: condRef.current,
+          paceScale: paceRef.current,
           drift: mode === 'drift' ? { limit: DRIFT_LIMIT, targets: Object.values(driftTargets(track)) } : undefined,
           onResult: (r) => (detail = r),
           // read the ref again per lap: the save changes after every lap and a stale closure would overwrite it

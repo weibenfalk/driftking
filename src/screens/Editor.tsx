@@ -63,11 +63,11 @@ export function EditorList({ tracks, onEdit, onNew, onRace, onDelete, onBack }: 
       bevel(ctx, 204, 32, 108, 76, C.navy0, true);
       if (cur) drawMap(ctx, cur.cp, world, 208, 36, 100, 68, rgb(envRoad(cur.env)), rgb(envGround(cur.env)));
       else text(ctx, 'NEW LAYOUT', 258, 66, C.dim, { align: 'center' });
-      text(ctx, 'EDITED TRACKS APPEAR IN', 208, 114, C.dim);
-      text(ctx, 'EVERY LIST UNDER CUSTOM.', 208, 122, C.dim);
-      text(ctx, 'THEY PAY NO PRIZE MONEY.', 208, 134, C.gold);
-      text(ctx, confirm ? 'PRESS X AGAIN TO DELETE' : tracks.length >= MAX_CUSTOM ? 'TRACK LIMIT REACHED' : '', W / 2, H - 22, C.red, { align: 'center' });
-      text(ctx, 'ENTER EDIT   R RACE   X DELETE   ESC BACK', W / 2, H - 9, C.ink, { align: 'center' });
+      text(ctx, 'EDITED TRACKS APPEAR IN', 208, 114, C.dim, { small: true });
+      text(ctx, 'EVERY LIST UNDER CUSTOM.', 208, 122, C.dim, { small: true });
+      text(ctx, 'THEY PAY NO PRIZE MONEY.', 208, 134, C.gold, { small: true });
+      text(ctx, confirm ? 'PRESS X AGAIN TO DELETE' : tracks.length >= MAX_CUSTOM ? 'TRACK LIMIT REACHED' : '', W / 2, H - 24, C.red, { align: 'center' });
+      text(ctx, 'ENTER EDIT   R RACE   X DELETE   ESC BACK', W / 2, H - 10, C.ink, { align: 'center', small: true });
     },
     key(e) {
       const n = nav(e);
@@ -217,28 +217,28 @@ export function Editor({ draft, onChange, onSave, onTest, onBack }: EditorProps)
       });
       // panel
       const px = MX + mw + 6;
-      text(ctx, 'ENVIRONMENT', px, 28, C.dim);
+      text(ctx, 'ENVIRONMENT', px, 28, C.dim, { small: true });
       text(ctx, envLabel(env), px, 36, C.gold);
-      text(ctx, `POINTS ${cp.length}`, px, 48, C.ink);
-      text(ctx, `LENGTH ${length}`, px, 56, C.ink);
-      text(ctx, problem ? 'PROBLEM' : 'TRACK OK', px, 70, problem ? C.red : C.green);
+      text(ctx, `POINTS ${cp.length}`, px, 48, C.ink, { small: true });
+      text(ctx, `LENGTH ${length}`, px, 56, C.ink, { small: true });
+      text(ctx, problem ? 'PROBLEM' : 'TRACK OK', px, 68, problem ? C.red : C.green);
       if (problem) {
         const words = problem.split(' ');
         let l = '';
-        let y = 78;
+        let y = 79;
         for (const w of words) {
-          if ((l + ' ' + w).trim().length > 15) {
-            text(ctx, l, px, y, C.red);
-            y += 8;
+          if ((l + ' ' + w).trim().length > 19) {
+            text(ctx, l, px, y, C.red, { small: true });
+            y += 7;
             l = w;
           } else l = (l + ' ' + w).trim();
         }
-        text(ctx, l, px, y, C.red);
+        text(ctx, l, px, y, C.red, { small: true });
       }
       const help = ['DRAG POINTS', 'CLICK ADDS', 'RIGHT CLICK', 'DELETES', '', 'E ENVIRONMENT', 'G NEW LAYOUT', 'T TEST DRIVE', 'ENTER SAVE'];
-      help.forEach((h, i) => text(ctx, h, px, 112 + i * 8, i < 4 ? C.dim : C.ink));
-      text(ctx, msg, MX, H - 22, C.red);
-      text(ctx, 'GREEN IS THE START. CYAN POINTS FORM THE START STRAIGHT.', MX, H - 12, C.dim);
+      help.forEach((h, i) => text(ctx, h, px, 112 + i * 8, i < 4 ? C.dim : C.ink, { small: true }));
+      text(ctx, msg, MX, H - 20, C.red);
+      text(ctx, 'GREEN IS THE START. CYAN POINTS FORM THE START STRAIGHT.', MX, H - 9, C.dim, { small: true });
     },
     key(e) {
       const k = e.key;

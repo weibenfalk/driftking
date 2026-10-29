@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
 import { audio } from './engine/audio';
+import { music } from './engine/music';
 import { driftMedal, lapMedal, medalFor, nextCareerTrack } from './game/career';
 import { loadCustom, newDraft, writeCustom } from './game/custom';
-import { medalPay, payout } from './game/economy';
+import { medalPay, payout, scalePayout } from './game/economy';
 import type { Mode } from './game/economy';
 import { selectedModel, selectedStats } from './game/garage';
 import { credit, loadSave, withDrift, withLap, withResult, writeSave } from './game/save';
 import type { Save } from './game/save';
-import { loadSettings, writeSettings } from './game/settings';
+import { DIFFICULTY, loadSettings, writeSettings } from './game/settings';
 import type { Settings as SettingsData } from './game/settings';
 import { conditionsFor } from './race/conditions';
 import type { Track } from './race/track';
@@ -64,9 +65,30 @@ export default function App() {
   useEffect(() => {
     audio.setMuted(!settings.sound);
     audio.setVolume(settings.volume / 10);
+    music.configure(settings.music, settings.song);
     document.documentElement.classList.toggle('scan', settings.scanlines);
     writeSettings(settings);
   }, [settings]);
+
+  // browsers only allow sound after a first click or key press
+  useEffect(() => {
+    const unlock = () => audio.unlock();
+    window.addEventListener('pointerdown', unlock, { once: true });
+    window.addEventListener('keydown', unlock, { once: true });
+    return () => {
+      window.removeEventListener('pointerdown', unlock);
+      window.removeEventListener('keydown', unlock);
+    };
+  }, []);
+
+  // M turns the music on and off from anywhere (the settings screen has the full set of switches)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.key === 'm' || e.key === 'M') && !e.ctrlKey && !e.metaKey && !e.altKey) setSettings((s) => ({ ...s, music: !s.music }));
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   const commit = (next: Save) => {
     setSave(next);
@@ -126,6 +148,7 @@ export default function App() {
     const mode = modeOf(from);
     const { track } = screen;
     const noPrize = isCustom(track); // custom tracks pay nothing, or a tiny track could be farmed for money
+    const prize = DIFFICULTY[settings.difficulty].prize;
     const keep = track.id !== TEST_ID; // a test drive leaves no records at all
     return (
       <RaceScreen
@@ -133,6 +156,7 @@ export default function App() {
         mode={mode}
         car={{ look: selectedModel(save).look, stats: selectedStats(save) }}
         conditions={conditionsFor(track, settings)}
+        paceScale={DIFFICULTY[settings.difficulty].pace}
         attack={
           mode === 'attack'
             ? {
@@ -140,7 +164,7 @@ export default function App() {
                 onLap: (t, r) => {
                   const medal = lapMedal(t, r.lap);
                   if (!keep) return { medal, earned: 0 };
-                  const earned = noPrize ? 0 : medalPay('attack', save.attack[t.id]?.medal ?? 0, medal);
+                  const earned = noPrize ? 0 : Math.round(medalPay('attack', save.attack[t.id]?.medal ?? 0, medal) * prize);
                   commit(credit(withLap(save, t.id, r, medal).save, 'attack', t.id, earned));
                   return { medal, earned };
                 },
@@ -151,7 +175,7 @@ export default function App() {
           if (mode === 'drift') {
             const medal = driftMedal(t, res.raw);
             const before = save.driftMode[t.id]?.medal ?? 0;
-            const earned = noPrize ? 0 : medalPay('drift', before, medal);
+            const earned = noPrize ? 0 : Math.round(medalPay('drift', before, medal) * prize);
             const r = withDrift(save, t.id, res.raw, medal);
             commit(credit(r.save, 'drift', t.id, earned));
             return { medal, isBest: r.isBest, payout: { place: 0, medal: earned, drift: 0, total: earned }, next: null };
@@ -159,7 +183,7 @@ export default function App() {
           const medal = medalFor(t, res.raw);
           const before = save.best[t.id];
           const r = withResult(save, t.id, res.raw, medal);
-          const pay = noPrize ? { place: 0, medal: 0, drift: 0, total: 0 } : payout({ place: res.place, drift: res.drift, medalBefore: before?.medal ?? 0, medalAfter: medal, repeat: !!before });
+          const pay = noPrize ? { place: 0, medal: 0, drift: 0, total: 0 } : scalePayout(payout({ place: res.place, drift: res.drift, medalBefore: before?.medal ?? 0, medalAfter: medal, repeat: !!before }), prize);
           const next = credit(r.save, 'race', t.id, pay.total);
           commit(next);
           return { medal, isBest: r.isBest, payout: pay, next: from === 'career' ? nextCareerTrack(next, t) : null };
