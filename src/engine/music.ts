@@ -74,6 +74,7 @@ let stream: Stream | null = null;
 let enabled = true;
 let choice = ALL;
 let level = 0.5;
+let waiting = false; // begin() is waiting for the browser to let the audio context run
 
 const songFor = (id: string) => SONGS.find((s) => s.id === id);
 const nextSong = (s: SongInfo) => (choice === ALL ? SONGS[(SONGS.indexOf(s) + 1) % SONGS.length] : s);
@@ -143,6 +144,18 @@ function begin() {
   const ctx = audio.ctx;
   const out = audio.out;
   if (!ctx || !out) return;
+  if (ctx.state !== 'running') {
+    // nothing is audible before the first click or key press, and a song queued on a stopped clock can start late or
+    // not at all in some browsers: wait until the context really runs
+    if (!waiting) {
+      waiting = true;
+      audio.whenRunning(() => {
+        waiting = false;
+        if (enabled && !stream) begin();
+      });
+    }
+    return;
+  }
   stopStream();
   const song = songFor(choice) ?? SONGS[0];
   const gain = ctx.createGain();

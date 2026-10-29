@@ -76,13 +76,15 @@ export default function App() {
 
   // browsers only allow sound after a first click or key press
   useEffect(() => {
-    const unlock = () => audio.unlock();
-    window.addEventListener('pointerdown', unlock, { once: true });
-    window.addEventListener('keydown', unlock, { once: true });
-    return () => {
-      window.removeEventListener('pointerdown', unlock);
-      window.removeEventListener('keydown', unlock);
+    // every kind of gesture counts in some browser, and the first one may not be enough: keep trying until it runs
+    const events = ['pointerdown', 'pointerup', 'click', 'keydown', 'touchend'] as const;
+    const off = () => events.forEach((e) => window.removeEventListener(e, unlock));
+    const unlock = () => {
+      audio.unlock();
+      if (audio.ctx?.state === 'running') off();
     };
+    events.forEach((e) => window.addEventListener(e, unlock));
+    return off;
   }, []);
 
   // a gamepad drives the menus through key events

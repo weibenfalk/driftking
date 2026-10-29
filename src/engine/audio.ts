@@ -40,6 +40,19 @@ export const audio = {
     ensure();
   },
 
+  /** Calls `fn` once the audio context is running (browsers keep it suspended until a click or key press). */
+  whenRunning(fn: () => void): void {
+    const c = ensure();
+    if (!c) return;
+    if (c.state === 'running') return fn();
+    const h = () => {
+      if (c.state !== 'running') return;
+      c.removeEventListener('statechange', h);
+      fn();
+    };
+    c.addEventListener('statechange', h);
+  },
+
   /** Raw context for custom sound graphs (e.g. a looping engine). */
   get ctx(): AudioContext | null {
     return ensure();
