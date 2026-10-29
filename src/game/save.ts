@@ -63,13 +63,11 @@ const level = (n: unknown) => (typeof n === 'number' && Number.isInteger(n) ? Ma
 
 const isMedal = (m: unknown): m is Medal => m === 0 || m === 1 || m === 2 || m === 3;
 
-/** Reads the save, dropping anything that doesn't look right instead of crashing on a corrupt or blocked store. */
-export function loadSave(): Save {
+/** Parses save text, dropping anything that doesn't look right. Returns null when it isn't a save at all. */
+export function parseSave(raw: string): Save | null {
   try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return emptySave();
     const data = JSON.parse(raw);
-    if (![1, 2, 3].includes(data?.v) || typeof data.best !== 'object' || !data.best) return emptySave();
+    if (![1, 2, 3].includes(data?.v) || typeof data.best !== 'object' || !data.best) return null;
     const save = emptySave(); // older saves lack the newer parts; those load with their defaults
     for (const [id, b] of Object.entries<Best>(data.best)) {
       if (typeof b?.time === 'number' && b.time > 0 && isMedal(b.medal)) save.best[id] = { time: b.time, medal: b.medal };
@@ -103,7 +101,31 @@ export function loadSave(): Save {
     }
     return save;
   } catch {
+    return null;
+  }
+}
+
+/** Reads the save from storage; a corrupt or blocked store gives a fresh one instead of a crash. */
+export function loadSave(): Save {
+  try {
+    const raw = localStorage.getItem(KEY);
+    return (raw && parseSave(raw)) || emptySave();
+  } catch {
     return emptySave();
+  }
+}
+
+/** The save as one pasteable line of text (for moving progress between browsers). */
+export function exportSave(save: Save): string {
+  return btoa(unescape(encodeURIComponent(JSON.stringify(save))));
+}
+
+/** Reads text from `exportSave`; null when it isn't valid. */
+export function importSave(code: string): Save | null {
+  try {
+    return parseSave(decodeURIComponent(escape(atob(code.trim()))));
+  } catch {
+    return null;
   }
 }
 

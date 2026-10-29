@@ -3,6 +3,7 @@ import Retro from '../ui/Retro';
 import type { RetroScreen } from '../ui/Retro';
 import { nav } from '../ui/nav';
 import { C, H, W, bevel, copperBackground, header, medalChip, text } from '../ui/kit';
+import { drawMap } from '../ui/map';
 import type { Group, Row } from './rows';
 
 interface Props {
@@ -80,12 +81,14 @@ export default function TrackList({ title, groups, onPick, onBack }: Props) {
       const r = rows[sel];
       bevel(ctx, 2, H - 36, W - 4, 34, C.navy2);
       if (r) {
+        // the track map (a bird's-eye view of the route) on the right of the box
+        bevel(ctx, W - 74, H - 34, 70, 30, C.navy0, true);
+        drawMap(ctx, r.track.cp, { w: r.track.width, h: r.track.height }, W - 72, H - 32, 66, 26, '#88a', '#334');
         text(ctx, r.track.name, 8, H - 31, C.gold, { scale: 1 });
-        text(ctx, `${r.track.env}  ${r.sub}`, W - 8, H - 31, C.dim, { align: 'right' });
-        text(ctx, `EARNED $${r.earned}`, 8, H - 21, C.green);
-        text(ctx, r.left > 0 ? `STILL TO EARN UP TO $${r.left}` : 'ALL MONEY EARNED HERE', 100, H - 21, r.left > 0 ? C.green : C.dim);
+        text(ctx, `${r.track.env}  ${r.sub}`, 8, H - 22, C.dim);
+        text(ctx, `EARNED $${r.earned}`, 8, H - 13, C.green);
+        text(ctx, r.left > 0 ? `UP TO $${r.left} LEFT` : 'ALL EARNED', 100, H - 13, r.left > 0 ? C.green : C.dim);
       }
-      text(ctx, 'UP DOWN SELECT   ENTER GO   ESC BACK', W / 2, H - 9, C.ink, { align: 'center' });
     },
     key(e) {
       const n = nav(e);

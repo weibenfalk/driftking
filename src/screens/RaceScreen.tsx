@@ -5,9 +5,11 @@ import type { Mode, Payout } from '../game/economy';
 import { fmt } from '../game/format';
 import type { Attack, Medal } from '../game/save';
 import type { CarStats } from '../race/car';
+import type { Conditions } from '../race/conditions';
 import { createGame } from '../race/race';
 import type { LapReport, RaceResult } from '../race/race';
 import type { Track } from '../race/track';
+import Crt from '../ui/Crt';
 import { nav } from '../ui/nav';
 import { C, H, W, bevel, button, medalChip, text } from '../ui/kit';
 
@@ -25,6 +27,8 @@ interface Props {
   mode: Mode;
   /** The player's car. */
   car: { look: number; stats: CarStats };
+  /** Weather and time of day. */
+  conditions: Conditions;
   /** Time attack instead of a race: no field, no finish, a ghost of the saved best lap. */
   attack?: { best: Attack | null; onLap: (track: Track, r: LapReport) => { medal: number; earned: number } };
   /** Called once when the player finishes: stores the result and says what it earned. */
@@ -78,7 +82,7 @@ function drawResult(ctx: CanvasRenderingContext2D, o: Outcome, mode: Mode, track
   text(ctx, 'LEFT RIGHT CHOOSE   ENTER GO', W / 2, y + 143, C.dim, { align: 'center' });
 }
 
-export default function RaceScreen({ track, mode, attack, car, onRecord, onNext, onExit }: Props) {
+export default function RaceScreen({ track, mode, attack, car, conditions, onRecord, onNext, onExit }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [run, setRun] = useState(0);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
@@ -88,6 +92,8 @@ export default function RaceScreen({ track, mode, attack, car, onRecord, onNext,
   exit.current = onExit;
   const carRef = useRef(car);
   carRef.current = car;
+  const condRef = useRef(conditions);
+  condRef.current = conditions;
   const attackRef = useRef(attack);
   attackRef.current = attack;
 
@@ -102,6 +108,7 @@ export default function RaceScreen({ track, mode, attack, car, onRecord, onNext,
         const a = attackRef.current;
         return createGame(api, track, {
           car: carRef.current,
+          conditions: condRef.current,
           drift: mode === 'drift' ? { limit: DRIFT_LIMIT, targets: Object.values(driftTargets(track)) } : undefined,
           onResult: (r) => (detail = r),
           // read the ref again per lap: the save changes after every lap and a stale closure would overwrite it
@@ -172,8 +179,8 @@ export default function RaceScreen({ track, mode, attack, car, onRecord, onNext,
   }, [outcome, mode, track, onNext]);
 
   return (
-    <main className="stage">
+    <Crt>
       <canvas ref={canvasRef} width={320} height={200} />
-    </main>
+    </Crt>
   );
 }

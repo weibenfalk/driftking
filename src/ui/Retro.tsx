@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import Crt from './Crt';
 import { H, W } from './kit';
 
 /** What a menu screen provides: how to draw a frame, and how it reacts to input. All coordinates are 320x200 pixels. */
@@ -7,6 +8,9 @@ export interface RetroScreen {
   key?(e: KeyboardEvent): void;
   hover?(x: number, y: number): void;
   click?(x: number, y: number): void;
+  /** Mouse button pressed (0 left, 2 right) and released, for dragging. */
+  down?(x: number, y: number, button: number): void;
+  up?(): void;
   wheel?(dy: number): void;
 }
 
@@ -52,22 +56,34 @@ export default function Retro({ screen }: { screen: RetroScreen }) {
       cur.current.click?.(p.x, p.y);
     };
     const onWheel = (e: WheelEvent) => cur.current.wheel?.(Math.sign(e.deltaY));
+    const onDown = (e: MouseEvent) => {
+      const p = pos(e);
+      cur.current.down?.(p.x, p.y, e.button);
+    };
+    const onUp = () => cur.current.up?.();
+    const onMenu = (e: Event) => e.preventDefault();
     window.addEventListener('keydown', onKey);
     canvas.addEventListener('mousemove', onMove);
     canvas.addEventListener('click', onClick);
     canvas.addEventListener('wheel', onWheel, { passive: true });
+    canvas.addEventListener('mousedown', onDown);
+    canvas.addEventListener('contextmenu', onMenu);
+    window.addEventListener('mouseup', onUp);
     return () => {
       cancelAnimationFrame(raf);
       window.removeEventListener('keydown', onKey);
       canvas.removeEventListener('mousemove', onMove);
       canvas.removeEventListener('click', onClick);
       canvas.removeEventListener('wheel', onWheel);
+      canvas.removeEventListener('mousedown', onDown);
+      canvas.removeEventListener('contextmenu', onMenu);
+      window.removeEventListener('mouseup', onUp);
     };
   }, []);
 
   return (
-    <main className="stage">
+    <Crt>
       <canvas ref={ref} width={W} height={H} />
-    </main>
+    </Crt>
   );
 }

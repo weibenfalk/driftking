@@ -2,8 +2,10 @@ import { drawText } from '../engine/pixelfont';
 import { TAU, formatTime } from '../engine/util';
 import { GHOST_LOOK, ROT, SPRITE, getLooks } from './car';
 import type { Car } from './car';
+import type { Conditions } from './conditions';
 import type { GhostPose } from './ghost';
 import { WATER } from './surfaces';
+import { Weather } from './weather';
 import type { World } from './track';
 
 export const SW = 320;
@@ -64,6 +66,8 @@ export interface View {
   popup: Popup | null;
   banner: Banner | null;
   hud: Hud;
+  /** Weather and time of day. */
+  cond: Conditions;
   /** Where the ghost car is this frame (time attack). */
   ghost?: GhostPose | null;
 }
@@ -72,6 +76,7 @@ export interface View {
 export function createRenderer(ctx: CanvasRenderingContext2D, world: World) {
   ctx.imageSmoothingEnabled = false;
   const looks = getLooks();
+  const weather = new Weather();
   const canvas = document.createElement('canvas');
   canvas.width = world.w;
   canvas.height = world.h;
@@ -230,6 +235,7 @@ export function createRenderer(ctx: CanvasRenderingContext2D, world: World) {
       ctx.drawImage(L.frames[fr], x, y);
     }
     drawGantry(ox, oy);
+    weather.draw(ctx, v.cond, cars, world, ox, oy);
     {
       // arrow over the player's car
       const x = Math.round(player.x - ox);

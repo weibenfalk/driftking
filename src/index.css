@@ -1,9 +1,11 @@
 html, body, #root { height: 100%; margin: 0; }
 body { background: #000; color: #fff; font-family: monospace; overflow: hidden; }
 .stage { position: relative; height: 100%; display: grid; place-items: center; }
-canvas {
-  width: min(100vw, 160vh);
-  aspect-ratio: 320 / 200;
-  image-rendering: pixelated;
-  image-rendering: crisp-edges;
+.crt { position: relative; width: min(100vw, 160vh); aspect-ratio: 320 / 200; }
+.crt canvas { display: block; width: 100%; height: 100%; image-rendering: pixelated; image-rendering: crisp-edges; }
+/* optional CRT scanlines: one dark line per source pixel row */
+.scan .crt::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(rgba(0, 0, 0, 0) 55%, rgba(0, 0, 0, 0.3) 100%);
+  background-size: 100% calc(100% / 200);
 }

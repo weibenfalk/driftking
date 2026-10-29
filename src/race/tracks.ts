@@ -1,6 +1,7 @@
 import { mulberry32 } from '../engine/util';
 import { generateCenterline, lakeSpot } from './trackgen';
 import type { GenOpts } from './trackgen';
+import { forgetWorld } from './track';
 import type { Ground, Props, Theme, Track } from './track';
 
 /* ------------------------------------------------------------------ */
@@ -146,7 +147,12 @@ const CITY: Env = {
 };
 
 const ENVS = { meadow: MEADOW, desert: DESERT, forest: FOREST, snow: SNOW, city: CITY };
-type EnvId = keyof typeof ENVS;
+export type EnvId = keyof typeof ENVS;
+export const ENV_IDS = Object.keys(ENVS) as EnvId[];
+export const envGround = (id: EnvId) => ENVS[id].theme.ground[1];
+export const envRoad = (id: EnvId) => ENVS[id].theme.road.base;
+export const envLabel = (id: EnvId) => ENVS[id].label;
+export const envRoadHalf = (id: EnvId) => ENVS[id].halfWidth + ENVS[id].cornerExtra;
 
 /* ------------------------------------------------------------------ */
 /* Tracks                                                              */
@@ -234,9 +240,36 @@ export function dailyTrack(date = new Date()): Track {
 
 let daily: Track | null = null;
 
-/** Every track including today's daily one. */
+/** Custom tracks from the editor: id, name, environment and control points. */
+export interface CustomTrack {
+  id: string;
+  name: string;
+  env: EnvId;
+  cp: [number, number][];
+}
+
+/** World size of custom tracks (the same as generated ones). */
+export const CUSTOM_W = 1700;
+export const CUSTOM_H = 1100;
+
+export const isCustom = (t: { id: string }) => t.id.startsWith('custom-');
+
+export function customToTrack(c: CustomTrack): Track {
+  const o: GenOpts = { width: CUSTOM_W, height: CUSTOM_H, roadHalf: envRoadHalf(c.env) };
+  return fromEnv(c.id, c.name, c.env, CUSTOM_W, CUSTOM_H, c.cp, lakeSpot(c.cp, 7, o));
+}
+
+let custom: Track[] = [];
+
+/** Replaces the set of custom tracks the lists show. */
+export function setCustomTracks(list: CustomTrack[]) {
+  for (const t of custom) forgetWorld(t.id);
+  custom = list.map(customToTrack);
+}
+
+/** Every track including today's daily one and the custom ones. */
 export function allTracks(): Track[] {
-  return [...TRACKS, (daily ??= dailyTrack())];
+  return [...TRACKS, (daily ??= dailyTrack()), ...custom];
 }
 
 export function findTrack(id: string): Track | undefined {

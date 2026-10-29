@@ -20,28 +20,31 @@ const MARGIN = 140;
  * Checks a centre line the way the game needs it: stays inside the world, no two far-apart stretches
  * come close enough to touch, no hairpin sharper than the car can take, and a straight at the start for the grid.
  */
-export function validate(cp: CP, o: GenOpts): boolean {
+export function checkTrack(cp: CP, o: GenOpts): string | null {
   const { S, N } = sampleCenterline(cp);
   const len = N * 4;
-  if (len < 3000 || len > 7000) return false;
-  for (const s of S) if (s.x < MARGIN || s.y < MARGIN || s.x > o.width - MARGIN || s.y > o.height - MARGIN) return false;
+  if (len < 3000) return 'TRACK TOO SHORT';
+  if (len > 7000) return 'TRACK TOO LONG';
+  for (const s of S) if (s.x < MARGIN || s.y < MARGIN || s.x > o.width - MARGIN || s.y > o.height - MARGIN) return 'TOO CLOSE TO THE EDGE';
   const gap = 2 * (o.roadHalf + 5) + 24;
   for (let i = 0; i < N; i += 2)
     for (let j = i + 2; j < N; j += 2) {
       const near = Math.min(j - i, N - (j - i));
       if (near < 70) continue; // 280px along the track: same corner
-      if (Math.hypot(S[i].x - S[j].x, S[i].y - S[j].y) < gap) return false;
+      if (Math.hypot(S[i].x - S[j].x, S[i].y - S[j].y) < gap) return 'ROAD TOUCHES ITSELF';
     }
   const head = (i: number) => Math.atan2(S[(i + N) % N].ty, S[(i + N) % N].tx);
   // corners: heading change over 72px. None too sharp, and enough of them to be worth driving.
   const turn = Array.from({ length: N }, (_, i) => Math.abs(wrapAngle(head(i + 18) - head(i))));
-  if (Math.max(...turn) > 1.75) return false;
+  if (Math.max(...turn) > 1.75) return 'A CORNER IS TOO SHARP';
   let corners = 0;
   for (let i = 0; i < N; i++) if (turn[i] > 0.85 && turn[i] >= turn[(i + N - 1) % N] && turn[i] > turn[(i + 1) % N]) corners++;
-  if (corners < (o.minCorners ?? 6)) return false;
-  if (Math.abs(wrapAngle(head(-25) - head(0))) > 0.08 || Math.abs(wrapAngle(head(25) - head(0))) > 0.08) return false;
-  return true;
+  if (corners < (o.minCorners ?? 6)) return 'NEEDS MORE CORNERS';
+  if (Math.abs(wrapAngle(head(-25) - head(0))) > 0.08 || Math.abs(wrapAngle(head(25) - head(0))) > 0.08) return 'START STRAIGHT IS BENT';
+  return null;
 }
+
+export const validate = (cp: CP, o: GenOpts) => checkTrack(cp, o) === null;
 
 /** Clockwise loop with a straight along the top (point 0 is the start line). Retries with derived seeds until one validates. */
 export function generateCenterline(seed: number, o: GenOpts): CP {

@@ -13,12 +13,14 @@ interface Props {
   onDrift: () => void;
   onGarage: () => void;
   onDaily: () => void;
+  onEditor: () => void;
+  onSettings: () => void;
 }
 
 const BTN_W = 150;
-const BTN_H = 13;
-const TOP = 80;
-const STEP = 15;
+const BTN_H = 11;
+const TOP = 64;
+const STEP = 13;
 
 export default function Menu(p: Props) {
   const [sel, setSel] = useState(0);
@@ -29,6 +31,8 @@ export default function Menu(p: Props) {
     ['DRIFT CHALLENGE', p.onDrift],
     [`GARAGE  $${p.save.money}`, p.onGarage],
     ['DAILY TRACK', p.onDaily],
+    ['TRACK EDITOR', p.onEditor],
+    ['SETTINGS', p.onSettings],
   ];
   const medals = Object.values(p.save.best);
   const gold = medals.filter((b) => b.medal === 3).length;
@@ -38,13 +42,13 @@ export default function Menu(p: Props) {
     draw(ctx, t) {
       copperBackground(ctx);
       stars(ctx, t);
-      rasterBars(ctx, t, 34, 12);
-      logo(ctx, 'DRIFT KING', W / 2, 24, 4);
-      text(ctx, 'TOP DOWN DRIFT RACING', W / 2, 54, C.cyan, { align: 'center' });
+      rasterBars(ctx, t, 32, 10);
+      logo(ctx, 'DRIFT KING', W / 2, 22, 4);
+      text(ctx, 'TOP DOWN DRIFT RACING', W / 2, 50, C.cyan, { align: 'center' });
       items.forEach(([label], i) => button(ctx, label, (W - BTN_W) / 2, TOP + i * STEP, BTN_W, BTN_H, i === sel));
-      text(ctx, 'UP DOWN SELECT   ENTER GO', W / 2, 176, C.dim, { align: 'center' });
-      text(ctx, `${gold} GOLD   ${medals.length} TRACKS DRIVEN`, W / 2, 185, C.gold, { align: 'center' });
-      text(ctx, 'ARROWS STEER  SPACE HANDBRAKE  ESC LEAVES A RACE', W / 2, 193, C.navy4, { align: 'center' });
+      text(ctx, 'UP DOWN SELECT   ENTER GO', W / 2, 174, C.dim, { align: 'center' });
+      text(ctx, `${gold} GOLD   ${medals.length} TRACKS DRIVEN`, W / 2, 183, C.gold, { align: 'center' });
+      text(ctx, 'ARROWS STEER  SPACE HANDBRAKE  ESC LEAVES A RACE', W / 2, 192, C.navy4, { align: 'center' });
     },
     key(e) {
       const n = nav(e);

@@ -101,6 +101,11 @@ export function getWorld(track: Track): World {
   return w;
 }
 
+/** Drops a cached world, e.g. after a custom track was edited under the same id. */
+export function forgetWorld(id: string) {
+  worlds.delete(id);
+}
+
 export function surfAt(world: World, x: number, y: number) {
   x |= 0;
   y |= 0;

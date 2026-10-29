@@ -9,6 +9,7 @@ const MUTE_KEY = 'driftking:v1:muted';
 let ctx: AudioContext | null = null;
 let master: GainNode | null = null;
 let muted = false;
+let volume = 1;
 const listeners = new Set<Listener>();
 
 try {
@@ -23,7 +24,7 @@ function ensure(): AudioContext | null {
       const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       ctx = new Ctor();
       master = ctx.createGain();
-      master.gain.value = muted ? 0 : 1;
+      master.gain.value = muted ? 0 : volume;
       master.connect(ctx.destination);
     } catch {
       return null;
@@ -90,13 +91,19 @@ export const audio = {
     }
   },
 
+  /** Master volume 0..1. */
+  setVolume(v: number): void {
+    volume = Math.min(1, Math.max(0, v));
+    if (master) master.gain.value = muted ? 0 : volume;
+  },
+
   isMuted(): boolean {
     return muted;
   },
 
   setMuted(m: boolean): void {
     muted = m;
-    if (master) master.gain.value = m ? 0 : 1;
+    if (master) master.gain.value = m ? 0 : volume;
     try {
       localStorage.setItem(MUTE_KEY, m ? '1' : '0');
     } catch {

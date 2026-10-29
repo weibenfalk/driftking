@@ -4,6 +4,7 @@ import { FIELD, aiDrive } from './ai';
 import { checkBoost, collideCars, createGrid, drive, updateDraft } from './car';
 import type { Car, CarStats, Env } from './car';
 import { LapRecorder, ghostAt, ghostTimeline } from './ghost';
+import type { Conditions } from './conditions';
 import type { GhostData } from './ghost';
 import { SH, SW, createRenderer } from './render';
 import type { Banner, Part, Popup } from './render';
@@ -33,6 +34,8 @@ export interface LapReport {
 }
 
 export interface GameOptions {
+  /** Weather and time of day (visual only). Defaults to clear daylight. */
+  conditions?: Conditions;
   /** The player's car: sprite look and physics multipliers. Defaults to the stock car. */
   car?: { look: number; stats: CarStats };
   onResult?: (r: RaceResult) => void;
@@ -471,6 +474,7 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
       cars,
       player,
       parts,
+      cond: opts.conditions ?? { weather: 'clear', time: 'day' },
       camX,
       camY,
       raceT,

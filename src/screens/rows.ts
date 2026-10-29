@@ -4,6 +4,7 @@ import type { Mode } from '../game/economy';
 import { fmt } from '../game/format';
 import type { Medal, Save } from '../game/save';
 import type { Track } from '../race/track';
+import { isCustom } from '../race/tracks';
 
 /** One selectable line in a track list. */
 export interface Row {
@@ -27,6 +28,11 @@ export interface Group {
 
 /** Everything a list needs to show about a track in a mode: best, medal, and money earned / still to earn. */
 export function rowFor(mode: Mode, save: Save, t: Track, locked = false): Row {
+  const r = baseRow(mode, save, t, locked);
+  return isCustom(t) ? { ...r, left: 0, sub: `${r.sub} NO PRIZE MONEY` } : r;
+}
+
+function baseRow(mode: Mode, save: Save, t: Track, locked: boolean): Row {
   const earned = save.earned[`${mode}:${t.id}`] ?? 0;
   if (mode === 'attack') {
     const a = save.attack[t.id];
