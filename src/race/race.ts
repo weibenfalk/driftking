@@ -1,8 +1,8 @@
 import type { GameApi, GameInstance } from '../engine/types';
-import { clamp, formatTime, rnd } from '../engine/util';
+import { clamp, formatTime, rnd, wrapAngle } from '../engine/util';
 import { AI_PACE, FIELD, aiDrive } from './ai';
 import { DNF_AFTER, Interp, PoseHistory, SNAP_EVERY, applyMotion, packCar } from '../net/duel';
-import type { InputMsg, SnapMsg } from '../net/duel';
+import type { InputMsg, InputTick, SnapMsg } from '../net/duel';
 import type { Link, Msg } from '../net/link';
 import { carFrame, checkBoost, collideCars, createDuel, createGrid, drive, updateDraft } from './car';
 import type { Car, CarStats, DriveInput, Env } from './car';
@@ -73,6 +73,8 @@ export interface GameOptions {
     rid: number;
     /** Sprite look of the host's car and of the guest's. */
     looks: [number, number];
+    /** Laps to race (the host's choice; the track's own number otherwise). */
+    laps: number;
   };
 }
 
@@ -86,7 +88,7 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
   const { input, audio } = api;
   const world = getWorld(track);
   const { S, N, hw } = world;
-  const LAPS = track.laps;
+  const LAPS = online?.laps ?? track.laps;
   const renderer = createRenderer(api.ctx, world);
 
   // engine sound: two looped 4-bit sample voices (like Paula channels) pitched by playbackRate, plus tyre noise
@@ -220,7 +222,12 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
   let lastSnapAt = 0;
   let goSeen = false;
   let hostPos = 1;
-  const inbox: InputMsg[] = [];
+  const inbox: InputTick[] = []; // host: the guest's ticks waiting to be played
+  let credit = 0; // host: game time we may spend on them this frame
+  let outbox: InputTick[] = []; // guest: ticks not yet sent
+  let lastSend = 0;
+  const corr = { x: 0, y: 0, a: 0 }; // guest: where our car is drawn relative to where it is, so corrections glide in
+  const vis = { x: remote?.x ?? 0, y: remote?.y ?? 0, a: remote?.a ?? 0 }; // host: the guest's car as drawn, smoothed
   const interp = new Interp();
   const hist = new PoseHistory();
   let netErr = 0; // guest: how far the host said our car was from where we had it, in px (for tests)
@@ -529,7 +536,7 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
       if (m.t === 'ready') {
         if (!peerReady) banner = null;
         peerReady = true;
-      } else if (m.t === 'in' && inbox.length < 600) inbox.push(m as InputMsg);
+      } else if (m.t === 'in' && inbox.length < 600) inbox.push(...(m as InputMsg).b);
     } else if (m.t === 'snap') onSnap(m as SnapMsg);
     else if (m.t === 'fin' && !mineDone) finish({ place: m.place, time: m.time });
   }
@@ -539,11 +546,23 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
     gotSnap = true;
     hostPos = m.pos;
     const wasHome = remote!.done;
-    interp.push(m.cars[0], performance.now());
+    interp.push(m.cars[0], m.ts, performance.now());
     applyMotion(remote!, m.cars[0]);
     if (remote!.done && !wasHome && !mineDone) banner = { a: 'OPPONENT HOME', b: `FINISH IN ${DNF_AFTER} S`, t: 90 };
     const g = m.cars[1];
-    if (!mineDone) netErr = Math.max(hist.correct(m.k, g, player), 0);
+    if (!mineDone) {
+      const r = hist.correct(m.k, g, player);
+      if (r) {
+        netErr = r.dist;
+        // the car itself goes where the host says at once; what is drawn catches up over a moment (or jumps after a reset)
+        if (r.dist > 60) corr.x = corr.y = corr.a = 0;
+        else {
+          corr.x -= r.dx;
+          corr.y -= r.dy;
+          corr.a -= r.da;
+        }
+      }
+    }
     if (g[11] !== player.lap) {
       const up = g[11] > player.lap;
       player.lap = g[11];
@@ -564,7 +583,7 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
     const now = performance.now();
     if (!online || guest || !peerReady || peerGone || now - lastSnapAt < SNAP_EVERY * 1000) return;
     lastSnapAt = now;
-    const snap: SnapMsg = { t: 'snap', rid: online.rid, k: ack, rt: raceT, ct: countT, go: countT >= COUNT ? 1 : 0, pos: placeOf(remote!), cars: [packCar(player), packCar(remote!)] };
+    const snap: SnapMsg = { t: 'snap', rid: online.rid, k: ack, ts: now, rt: raceT, ct: countT, go: countT >= COUNT ? 1 : 0, pos: placeOf(remote!), cars: [packCar(player), packCar(remote!)] };
     online.link.sendFast(snap);
   }
 
@@ -656,12 +675,25 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
     } else if (guest) {
       // predict our own car and tell the host what we did; the other car is wherever the host last said, a moment ago
       if (!player.ai) {
+        // what we send is rounded, and we step with the rounded numbers too, so the host replays exactly what we did
         const inp = ownInput();
+        inp.steer = Math.round(inp.steer * 100) / 100;
+        const tick = Math.round(dt * 1000) / 1000;
         seq++;
-        online.link.send({ t: 'in', rid: online.rid, k: seq, dt, s: inp.steer, g: inp.gas ? 1 : 0, b: inp.brake ? 1 : 0, h: inp.hand ? 1 : 0 } satisfies InputMsg);
-        stepCar(player, inp, dt);
+        outbox.push([seq, tick, inp.steer, inp.gas ? 1 : 0, inp.brake ? 1 : 0, inp.hand ? 1 : 0]);
+        stepCar(player, inp, tick);
         hist.push(seq, player);
+        const now = performance.now();
+        if (now - lastSend >= 30 || outbox.length >= 6) {
+          online.link.send({ t: 'in', rid: online.rid, b: outbox } satisfies InputMsg);
+          outbox = [];
+          lastSend = now;
+        }
       } else stepCar(player, null, dt);
+      const fade = Math.pow(0.85, dt);
+      corr.x *= fade;
+      corr.y *= fade;
+      corr.a *= fade;
       if (interp.ready) {
         interp.place(remote!, performance.now());
         carFrame(remote!, world);
@@ -673,11 +705,29 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
       if (remote!.ai) {
         inbox.length = 0;
         stepCar(remote!, null, dt);
-      } else
-        for (const m of inbox.splice(0, 120)) {
-          stepCar(remote!, { steer: m.s, gas: !!m.g, brake: !!m.b, hand: !!m.h }, m.dt);
-          ack = m.k;
+      } else {
+        // play the guest's ticks back at the pace they were made, not the pace they arrived (a shaky connection
+        // delivers them in bunches), a little faster when too many have piled up
+        credit = Math.min(8, credit + dt * (inbox.length > 10 ? 2 : inbox.length > 3 ? 1.3 : 1));
+        while (inbox.length && credit + 1e-6 >= inbox[0][1]) {
+          const [k, tick, steer, gas, brake, hand] = inbox.shift()!;
+          credit -= tick;
+          stepCar(remote!, { steer, gas: !!gas, brake: !!brake, hand: !!hand }, tick);
+          ack = k;
         }
+        if (!inbox.length) credit = 0;
+      }
+      // the guest's car moves in whole ticks, so what is drawn follows it a little smoothly
+      const follow = Math.min(1, 0.45 * dt);
+      if (Math.hypot(remote!.x - vis.x, remote!.y - vis.y) > 50) {
+        vis.x = remote!.x;
+        vis.y = remote!.y;
+        vis.a = remote!.a;
+      } else {
+        vis.x += (remote!.x - vis.x) * follow;
+        vis.y += (remote!.y - vis.y) * follow;
+        vis.a += wrapAngle(remote!.a - vis.a) * follow;
+      }
     }
     // a duel ends when both players are home, or the loser had its time, or the other one is gone
     if (online && state === 'race' && mineDone && (remote!.done || peerGone)) {
@@ -714,8 +764,8 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
     parts = parts.filter((q) => q.life > 0);
     if (parts.length > 500) parts.splice(0, parts.length - 500);
 
-    const tx = player.x + clamp(player.vx * 20, -110, 110);
-    const ty = player.y + clamp(player.vy * 20, -64, 64);
+    const tx = player.x + (guest ? corr.x : 0) + clamp(player.vx * 20, -110, 110);
+    const ty = player.y + (guest ? corr.y : 0) + clamp(player.vy * 20, -64, 64);
     camX += (tx - camX) * Math.min(1, 0.1 * dt);
     camY += (ty - camY) * Math.min(1, 0.1 * dt);
     camX = clamp(camX, SW / 2, world.w - SW / 2);
@@ -733,10 +783,13 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
     const running = !!attack && player.lap >= 1;
     const lapT = running ? raceT - lapStart : 0;
     const gap = running && timeline ? lapT - timeline[player.idx] : NaN;
+    // in a duel, what is drawn is smoothed a little: the guest's own corrections, the host's view of the guest's car
+    const shownPlayer = guest ? { ...player, x: player.x + corr.x, y: player.y + corr.y, a: player.a + corr.a } : player;
+    const shownCars = !online ? cars : cars.map((c) => (c === player ? shownPlayer : c === remote && !guest ? { ...c, x: vis.x, y: vis.y, a: vis.a } : c));
     renderer.draw({
       ghost: running && ghostData ? ghostAt(ghostData, lapT) : null,
-      cars,
-      player,
+      cars: shownCars,
+      player: shownPlayer,
       parts,
       cond: opts.conditions ?? { weather: 'clear', time: 'day' },
       camX,
@@ -773,6 +826,17 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
 
   return {
     timeUp: () => (state === 'done' ? finalRaw : 15000),
-    inspect: () => ({ cars, player, remote, raceT, state, mineDone, netErr, finishers: finishers.map((c) => cars.indexOf(c)) }),
+    inspect: () => ({
+      cars,
+      player,
+      remote,
+      raceT,
+      state,
+      mineDone,
+      netErr,
+      finishers: finishers.map((c) => cars.indexOf(c)),
+      // where the two cars are drawn
+      shown: { player: guest ? { ...player, x: player.x + corr.x, y: player.y + corr.y, a: player.a + corr.a } : player, remote: guest ? remote : { ...remote, ...vis } },
+    }),
   };
 }

@@ -10,6 +10,8 @@ export interface Mqtt {
   /** Resolves once the broker has confirmed the subscription. `fn` gets the text of every message on it. */
   subscribe(topic: string, fn: (text: string) => void): Promise<void>;
   readonly open: boolean;
+  /** Bytes waiting to be sent: grows when the connection is slower than what we send. */
+  readonly buffered: number;
   onClose(fn: () => void): void;
   close(): void;
 }
@@ -79,6 +81,9 @@ export function connectMqtt(url: string, timeoutMs = 6000): Promise<Mqtt> {
     const mqtt: Mqtt = {
       get open() {
         return up && !closed && ws.readyState === WebSocket.OPEN;
+      },
+      get buffered() {
+        return ws.bufferedAmount;
       },
       publish(topic, text) {
         if (mqtt.open) ws.send(packet(0x30, [...str(topic), ...enc.encode(text)]));

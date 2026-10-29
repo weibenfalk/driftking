@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { upgrade } from '../net/connect';
 import type { Link } from '../net/link';
 import { hostRoom, joinRoom } from '../net/relay';
 import type { Room } from '../net/relay';
@@ -36,6 +37,9 @@ async function copy(code: string): Promise<boolean> {
   }
 }
 
+/** Lap counts the host can pick from. */
+const LAP_CHOICES = [1, 2, 3, 4, 5, 6, 8, 10];
+
 const BTN_X = 60;
 const BTN_W = W - 120;
 
@@ -54,6 +58,9 @@ export default function Online({ save, look, conditions, onStart, onBack }: Prop
   const link = useRef<Link | null>(null);
   const started = useRef(false);
   const track = useRef<Track | null>(null);
+  const [laps, setLaps] = useState(3);
+  const lapsRef = useRef(3);
+  lapsRef.current = laps;
   const live = useRef(true);
 
   useEffect(() => {
@@ -68,11 +75,21 @@ export default function Online({ save, look, conditions, onStart, onBack }: Prop
     };
   }, []);
 
-  /** Both channels are open. The guest says which car it drives; the host answers with the whole setup. */
+  /** The two are paired through the relay: try for a direct connection, then carry on with whichever link we got. */
+  const paired = async (relay: Link) => {
+    if (!live.current) return relay.close();
+    link.current = relay;
+    setLinked(true);
+    setMsg('FRIEND FOUND. TRYING A DIRECT CONNECTION...');
+    const { link: l, direct } = await upgrade(relay);
+    console.log(direct ? 'playing over a direct connection' : 'playing through the relay');
+    linkUp(l);
+  };
+
+  /** The link to play on is ready. The guest says which car it drives; the host answers with the whole setup. */
   const linkUp = (l: Link) => {
     if (!live.current) return l.close();
     link.current = l;
-    setLinked(true);
     setMsg('CONNECTED');
     const go = (s: Session) => {
       started.current = true;
@@ -80,15 +97,15 @@ export default function Online({ save, look, conditions, onStart, onBack }: Prop
     };
     l.onClose(() => !started.current && live.current && setErr('THE CONNECTION CLOSED'));
     if (l.role === 'guest') {
-      l.onMessage((m) => m.t === 'hello' && go({ link: l, trackId: m.trackId, cond: m.cond, looks: m.looks }));
+      l.onMessage((m) => m.t === 'hello' && go({ link: l, trackId: m.trackId, cond: m.cond, looks: m.looks, laps: m.laps }));
       l.send({ t: 'join', look });
       setMsg('CONNECTED - WAITING FOR THE HOST TO START');
     } else {
       l.onMessage((m) => {
         if (m.t !== 'join' || started.current || !track.current) return;
         const guestLook = m.look === look ? (look + 1) % PLAYER_LOOKS : m.look;
-        const s: Session = { link: l, trackId: track.current.id, cond: conditions(track.current), looks: [look, guestLook] };
-        l.send({ t: 'hello', trackId: s.trackId, cond: s.cond, looks: s.looks });
+        const s: Session = { link: l, trackId: track.current.id, cond: conditions(track.current), looks: [look, guestLook], laps: lapsRef.current };
+        l.send({ t: 'hello', trackId: s.trackId, cond: s.cond, looks: s.looks, laps: s.laps });
         go(s);
       });
     }
@@ -101,6 +118,7 @@ export default function Online({ save, look, conditions, onStart, onBack }: Prop
 
   const startHost = async (t: Track) => {
     track.current = t;
+    setLaps(t.laps);
     setPhase('host');
     setErr('');
     setMsg('OPENING A ROOM...');
@@ -110,7 +128,7 @@ export default function Online({ save, look, conditions, onStart, onBack }: Prop
       pending.current = room;
       setCode(room.code);
       setMsg((await copy(room.code)) ? 'ROOM CODE COPIED. WAITING FOR YOUR FRIEND...' : 'WAITING FOR YOUR FRIEND...');
-      room.connected.then(linkUp).catch(fail);
+      room.connected.then(paired).catch(fail);
     } catch (e) {
       fail(e);
     }
@@ -129,7 +147,7 @@ export default function Online({ save, look, conditions, onStart, onBack }: Prop
         return setErr('THAT IS NOT A ROOM CODE');
       }
       pending.current = room;
-      room.connected.then(linkUp).catch(fail);
+      room.connected.then(paired).catch(fail);
     } catch (e) {
       fail(e);
     }
@@ -158,7 +176,8 @@ export default function Online({ save, look, conditions, onStart, onBack }: Prop
     return <TrackList title="PICK A TRACK TO HOST" groups={groups} onPick={(r) => void startHost(r.track)} onBack={() => setPhase('menu')} />;
   }
 
-  type B = { label: string; act: () => void; off?: boolean };
+  const cycle = (v: number, d: number) => LAP_CHOICES[(Math.max(0, LAP_CHOICES.indexOf(v)) + d + LAP_CHOICES.length) % LAP_CHOICES.length];
+  type B = { label: string; act: () => void; off?: boolean; step?: (d: number) => void };
   let buttons: B[];
   if (phase === 'menu')
     buttons = [
@@ -168,6 +187,7 @@ export default function Online({ save, look, conditions, onStart, onBack }: Prop
     ];
   else if (phase === 'host')
     buttons = [
+      { label: `LAPS  < ${laps} >`, act: () => setLaps(cycle(laps, 1)), off: linked, step: (d: number) => setLaps(cycle(laps, d)) },
       { label: 'COPY ROOM CODE', act: () => void copy(code).then((ok) => ok && setMsg('ROOM CODE COPIED')), off: !code },
       { label: 'BACK', act: () => (reset(), setPhase('menu')) },
     ];
@@ -208,6 +228,7 @@ export default function Online({ save, look, conditions, onStart, onBack }: Prop
       if (n === 'up') setSel((sel + buttons.length - 1) % buttons.length);
       else if (n === 'down') setSel((sel + 1) % buttons.length);
       else if (n === 'ok') press(sel);
+      else if ((n === 'left' || n === 'right') && buttons[sel]?.step && !buttons[sel].off) buttons[sel].step!(n === 'left' ? -1 : 1);
       else if (n === 'back') buttons[buttons.length - 1].act();
     },
     hover(x, y) {

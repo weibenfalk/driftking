@@ -191,7 +191,7 @@ export default function RaceScreen({ track, mode, attack, car, conditions, paceS
           paceScale: paceRef.current,
           drift: mode === 'drift' ? { limit: DRIFT_LIMIT, targets: Object.values(driftTargets(track)) } : undefined,
           onResult: (r) => (detail = r),
-          online: online && { link: online.link, rid: run, looks: online.looks },
+          online: online && { link: online.link, rid: run, looks: online.looks, laps: online.laps },
           // read the ref again per lap: the save changes after every lap and a stale closure would overwrite it
           attack: a && { best: a.best, onLap: (r) => attackRef.current?.onLap(track, r) },
         });

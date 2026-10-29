@@ -9,7 +9,11 @@ import type { Link, Msg, Role } from './link';
 import { connectMqtt } from './mqtt';
 import type { Mqtt } from './mqtt';
 
-/** Public brokers with WebSocket support, tried in order. The first character of a room code says which one. */
+/**
+ * Public brokers with WebSocket support, tried in order. The first character of a room code says which one. HiveMQ
+ * carries the game well (about 50 ms there and back); EMQX's public broker drops most messages once they come fast, so
+ * it is only a way to find each other when HiveMQ can't be reached.
+ */
 const BROKERS = ['wss://broker.hivemq.com:8884/mqtt', 'wss://broker.emqx.io:8084/mqtt'];
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O or 1/I
 /** Seconds of silence after which the other side counts as gone. */
@@ -75,7 +79,8 @@ function makeRelayLink(role: Role, mqtt: Mqtt, out: string, inn: string): Link {
       return !closed && mqtt.open;
     },
     send,
-    sendFast: send,
+    // a snapshot that waits in a queue is worse than none: drop it when the connection is behind
+    sendFast: (msg) => mqtt.buffered < 6000 && send(msg),
     onMessage: msgs.on,
     onClose(fn) {
       if (closed) fn();
@@ -91,8 +96,7 @@ function makeRelayLink(role: Role, mqtt: Mqtt, out: string, inn: string): Link {
 
 /** Host: open a room and wait for one guest. */
 export async function hostRoom(): Promise<Room> {
-  const first = Math.floor(Math.random() * BROKERS.length);
-  const { mqtt, index } = await openBroker(first);
+  const { mqtt, index } = await openBroker(0);
   let code = String(index + 1);
   for (let i = 0; i < 5; i++) code += ALPHABET[Math.floor(Math.random() * ALPHABET.length)];
   const t = topics(code);

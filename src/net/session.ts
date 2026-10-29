@@ -8,6 +8,8 @@ export interface Session {
   cond: Conditions;
   /** Sprite look of the host's car and of the guest's. */
   looks: [number, number];
+  /** Laps to race (the host picks). */
+  laps: number;
 }
 
 /** Number of player sprite looks (see `getLooks` in race/car.ts). */

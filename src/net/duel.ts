@@ -10,21 +10,17 @@ import type { Car } from '../race/car';
 
 /** Seconds between host snapshots. */
 export const SNAP_EVERY = 0.033;
-/** How far in the past the other car is drawn, so there are normally two snapshots to blend between. */
-export const INTERP_DELAY = 0.07;
 /** Seconds the loser gets to cross the line once the winner has. */
 export const DNF_AFTER = 25;
 
-/** One frame of the guest's controls. */
+/** One tick of the guest's controls: number, dt, steer, gas, brake, handbrake. */
+export type InputTick = [k: number, dt: number, s: number, g: 0 | 1, b: 0 | 1, h: 0 | 1];
+
+/** A few ticks at a time, so a fast frame rate doesn't mean a flood of messages. */
 export interface InputMsg {
   t: 'in';
   rid: number;
-  k: number;
-  dt: number;
-  s: number;
-  g: 0 | 1;
-  b: 0 | 1;
-  h: 0 | 1;
+  b: InputTick[];
 }
 
 /** A car on the wire: x, y, angle, vx, vy, vf, vr, steer, slide, boost, draft, lap, idx, done. */
@@ -35,6 +31,8 @@ export interface SnapMsg {
   rid: number;
   /** The last guest input tick the host had stepped when this was taken. */
   k: number;
+  /** Host clock (ms) when this was taken, for drawing the host's car at the right moment. */
+  ts: number;
   /** Race clock, start countdown, and whether the lights have gone green. */
   rt: number;
   ct: number;
@@ -66,32 +64,57 @@ export function applyMotion(c: Car, w: WireCar) {
   c.done = !!w[13];
 }
 
-/** Snapshots of the other car with their arrival times, sampled `INTERP_DELAY` in the past. */
+/**
+ * Snapshots of the other car, drawn a little in the past on the host's own timeline: arrival times jump around, the
+ * host's timestamps don't. The delay follows how much the arrivals wobble, so a steady connection looks sharp and a
+ * shaky one still looks smooth.
+ */
 export class Interp {
-  private buf: { at: number; w: WireCar }[] = [];
+  private buf: { ts: number; w: WireCar }[] = [];
+  private lag: number[] = [];
+  /** Estimated (arrival - timestamp) of a snapshot that took no extra time, ms. */
+  private base = NaN;
+  /** How far in the past the car is drawn, ms. */
+  delay = 90;
 
-  push(w: WireCar, now: number) {
-    this.buf.push({ at: now, w });
-    if (this.buf.length > 12) this.buf.shift();
+  push(w: WireCar, ts: number, now: number) {
+    const last = this.buf[this.buf.length - 1];
+    if (last && ts <= last.ts) return; // late or repeated
+    this.buf.push({ ts, w });
+    if (this.buf.length > 40) this.buf.shift();
+    this.lag.push(now - ts);
+    if (this.lag.length > 120) this.lag.shift();
+    const best = Math.min(...this.lag);
+    this.base = Number.isNaN(this.base) || best < this.base ? best : this.base + (best - this.base) * 0.02;
+    const wobble = this.lag.map((l) => l - best).sort((x, y) => x - y)[Math.floor(this.lag.length * 0.9)] ?? 0;
+    const want = Math.min(300, Math.max(70, wobble + SNAP_EVERY * 1000 + 25));
+    this.delay += (want - this.delay) * (want > this.delay ? 0.2 : 0.02); // quick to grow, slow to shrink
   }
 
   get ready() {
     return this.buf.length > 0;
   }
 
-  /** Places `c` where the car was `INTERP_DELAY` ago (held at the newest snapshot when it has run dry). */
+  /** Places `c` where the car was `delay` ms ago, holding on and running on a little if the next snapshot is late. */
   place(c: Car, now: number) {
     const b = this.buf;
     if (!b.length) return;
-    const t = now - INTERP_DELAY * 1000;
+    const t = now - this.base - this.delay;
     let i = b.length - 1;
-    while (i > 0 && b[i - 1].at > t) i--;
-    const hi = b[i];
-    const lo = i > 0 ? b[i - 1] : hi;
-    const f = hi === lo || t >= hi.at ? 1 : t <= lo.at ? 0 : (t - lo.at) / (hi.at - lo.at);
+    while (i > 0 && b[i].ts > t) i--;
+    const lo = b[i];
+    const hi = b[i + 1];
+    if (!hi) {
+      const f = Math.min(t - lo.ts, 120) / 16.67; // frames since the last snapshot, up to a little over a tenth of a second
+      const ahead = Math.max(0, f);
+      c.x = lo.w[0] + lo.w[3] * ahead;
+      c.y = lo.w[1] + lo.w[4] * ahead;
+      c.a = lo.w[2];
+      return;
+    }
+    const f = Math.min(1, Math.max(0, (t - lo.ts) / (hi.ts - lo.ts)));
     // a gap this big is a reset (water, off track): jump rather than slide across the map
-    const jump = Math.hypot(hi.w[0] - lo.w[0], hi.w[1] - lo.w[1]) > 60;
-    const g = jump ? 1 : f;
+    const g = Math.hypot(hi.w[0] - lo.w[0], hi.w[1] - lo.w[1]) > 60 ? (f >= 0.5 ? 1 : 0) : f;
     c.x = lo.w[0] + (hi.w[0] - lo.w[0]) * g;
     c.y = lo.w[1] + (hi.w[1] - lo.w[1]) * g;
     c.a = lo.w[2] + wrapAngle(hi.w[2] - lo.w[2]) * g;
@@ -120,22 +143,21 @@ export class PoseHistory {
 
   /**
    * The host held the car at `w` after tick `k`. Moves the car (and the remembered poses from tick k on, so the next
-   * comparison doesn't count the same error twice) part of the way there. Returns the error in pixels, or -1 when
-   * tick k is no longer remembered.
+   * comparison doesn't count the same error twice) all the way there and says how far that was; null when tick k is
+   * no longer remembered or the two already agree.
    */
-  correct(k: number, w: WireCar, c: Car): number {
+  correct(k: number, w: WireCar, c: Car): { dist: number; dx: number; dy: number; da: number } | null {
     let at = -1;
     for (let i = this.poses.length - 1; i >= 0; i--)
       if (this.poses[i].k <= k) {
         at = i;
         break;
       }
-    if (at < 0) return -1;
+    if (at < 0) return null;
     const m = this.poses[at];
     const dist = Math.hypot(w[0] - m.x, w[1] - m.y);
-    const gain = dist > 40 ? 1 : dist < 0.4 ? 0 : 0.3;
-    if (gain === 0) return dist;
-    const d = { x: (w[0] - m.x) * gain, y: (w[1] - m.y) * gain, a: wrapAngle(w[2] - m.a) * gain, vx: (w[3] - m.vx) * gain, vy: (w[4] - m.vy) * gain, vf: (w[5] - m.vf) * gain, vr: (w[6] - m.vr) * gain };
+    if (dist < 0.3) return { dist, dx: 0, dy: 0, da: 0 };
+    const d = { x: w[0] - m.x, y: w[1] - m.y, a: wrapAngle(w[2] - m.a), vx: w[3] - m.vx, vy: w[4] - m.vy, vf: w[5] - m.vf, vr: w[6] - m.vr };
     const shift = (p: { x: number; y: number; a: number; vx: number; vy: number; vf: number; vr: number }) => {
       p.x += d.x;
       p.y += d.y;
@@ -147,6 +169,6 @@ export class PoseHistory {
     };
     shift(c);
     for (let i = at; i < this.poses.length; i++) shift(this.poses[i]);
-    return dist;
+    return { dist, dx: d.x, dy: d.y, da: d.a };
   }
 }
