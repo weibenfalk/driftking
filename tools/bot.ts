@@ -6,6 +6,7 @@
 import { sampleCenterline, aiSpeeds, roadWidths, nearestIdx, turnAhead, parTime, ASPHALT, GRASS } from '../src/race/track';
 import { TRACKS } from '../src/race/tracks';
 import { createGrid, drive, UNIT_STATS } from '../src/race/car';
+import { autoConditions, weatherGrip } from '../src/race/conditions';
 import { wrapAngle, clamp } from '../src/engine/util';
 
 export function makeWorld(id: string) {
@@ -22,7 +23,7 @@ export function makeWorld(id: string) {
 /** A competent-driver bot: pure pursuit steering and a speed limit taken from the corner profile times `m`. */
 export function runBot(world: any, m: number, laps = 3, stats = UNIT_STATS) {
   const { S, N, aiSpd } = world;
-  const env: any = { world, bump() {}, treeHit() {} };
+  const env: any = { world, bump() {}, treeHit() {}, grip: weatherGrip(world.track, autoConditions(world.track).weather) }; // the track's own weather, as in the game
   const c = createGrid(world, [], 0, stats)[0];
   c.ai = false;
   let frames = 0, grassFrames = 0, lapStart = 0; const lapTimes: number[] = []; let lap = 0; c.idx = nearestIdx(world, c.x, c.y, 0, 0, N);

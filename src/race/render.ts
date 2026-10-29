@@ -79,6 +79,8 @@ export interface View {
   lights?: number;
   /** Frames since a race was finished, for the chequered flag. */
   flag?: number;
+  /** Replay mode: cinema bars and a label instead of the HUD. `cam` is the camera name index. */
+  cinema?: { t: number; cam: number };
 }
 
 /** Owns a private copy of the track bitmap (so skid marks can be painted on it) and draws frames. */
@@ -181,6 +183,19 @@ export function createRenderer(ctx: CanvasRenderingContext2D, world: World) {
         ctx.fillRect(x - 2, y + 4, 2, 2);
       }
     }
+  }
+
+  /** Black bars top and bottom with a blinking REPLAY and the camera in use. */
+  function drawCinema(c: { t: number; cam: number }) {
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, SW, 16);
+    ctx.fillRect(0, SH - 16, SW, 16);
+    ctx.fillStyle = '#335';
+    ctx.fillRect(0, 16, SW, 1);
+    ctx.fillRect(0, SH - 17, SW, 1);
+    if (Math.floor(c.t * 2) % 2 === 0) drawText(ctx, 'REPLAY', 8, 5, '#ff3020', { shadow: '#000' });
+    drawText(ctx, ['CHASE CAM', 'TRACKSIDE', 'RIVALS'][c.cam], SW - 8, 5, '#aab0c8', { align: 'right', shadow: '#000' });
+    drawText(ctx, 'ARROWS CHANGE CAMERA   ESC BACK', SW / 2, SH - 11, '#aab0c8', { align: 'center', small: true });
   }
 
   /** Chequered band that sweeps in from the left and then waves. */
@@ -342,7 +357,8 @@ export function createRenderer(ctx: CanvasRenderingContext2D, world: World) {
       const s = c.ai && c !== player ? 2 : 3;
       ctx.fillRect(SW - 74 + (((c.x / world.w) * 66 + 1) | 0), BAR_H + 3 + (((c.y / world.h) * 46 + 1) | 0), s, s);
     }
-    drawHud(v);
+    if (v.cinema) drawCinema(v.cinema);
+    else drawHud(v);
     if (v.lights !== undefined) drawLights(v.lights);
     if (v.flag !== undefined) drawFlag(v.flag);
     if (popup) {

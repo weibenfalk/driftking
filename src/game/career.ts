@@ -27,6 +27,12 @@ export function careerPace(trackId: string): number {
   return i < 0 ? 1 : 0.92 + (i / (all.length - 1)) * 0.19;
 }
 
+/** Prize money grows with the cup (1.0, 1.15, 1.3, 1.45), so the harder cups pay for the better cars. Other tracks: 1. */
+export function careerPrize(trackId: string): number {
+  const i = CUPS.findIndex((c) => c.trackIds.includes(trackId));
+  return i < 0 ? 1 : 1 + i * 0.15;
+}
+
 export const MEDAL_NAMES = ['NO MEDAL', 'BRONZE', 'SILVER', 'GOLD'];
 
 /** Points (bronze 1, silver 2, gold 3) needed in a cup to open the next one. Max per cup is 12. */
@@ -41,13 +47,26 @@ const START_ALLOWANCE = 2;
 const FACTORS = { gold: 0.8, silver: 0.87, bronze: 0.97 }; // races: traffic costs a little, so these are looser than the lap factors
 const LAP_FACTORS = { gold: 0.74, silver: 0.8, bronze: 0.9 }; // time attack, one clean lap
 
+/**
+ * Per-track correction on the par time, measured with `tools/medalcheck.ts`: the test bot's bronze and silver laps
+ * against the targets. Without it the snow cup's medals were a good 12% easier than the meadow cup's, the city cup's
+ * a little harder. 1 = the bot lands right on the target.
+ */
+const TUNE: Record<string, number> = {
+  meadow: 1, lakeside: 1.06, hills: 1.04, dunes: 0.99,
+  canyon: 1, mirage: 1.04, 'pine-ridge': 0.95, 'mud-creek': 0.935,
+  'deep-woods': 0.94, 'ice-pass': 0.86, frostbite: 0.88, whiteout: 0.875,
+  downtown: 1.035, harbor: 1.035, 'neon-alley': 1.045, skyline: 1.04,
+};
+const tunedPar = (track: Track) => parTime(track) * (TUNE[track.id] ?? 1);
+
 const targetCache = new Map<string, { gold: number; silver: number; bronze: number }>();
 
 /** Target scores in 1/100 s: beat the number to earn the medal. */
 export function targets(track: Track) {
   let t = targetCache.get(track.id);
   if (!t) {
-    const par = parTime(track);
+    const par = tunedPar(track);
     const at = (f: number) => Math.round((par * f + START_ALLOWANCE) * 100);
     targetCache.set(track.id, (t = { gold: at(FACTORS.gold), silver: at(FACTORS.silver), bronze: at(FACTORS.bronze) }));
   }
@@ -93,7 +112,7 @@ const lapCache = new Map<string, { gold: number; silver: number; bronze: number 
 export function lapTargets(track: Track) {
   let t = lapCache.get(track.id);
   if (!t) {
-    const lap = parTime(track) / track.laps;
+    const lap = tunedPar(track) / track.laps;
     const at = (f: number) => Math.round(lap * f * 100);
     lapCache.set(track.id, (t = { gold: at(LAP_FACTORS.gold), silver: at(LAP_FACTORS.silver), bronze: at(LAP_FACTORS.bronze) }));
   }

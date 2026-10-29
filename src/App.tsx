@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { audio } from './engine/audio';
+import { startPadMenu } from './engine/gamepad';
 import { music } from './engine/music';
-import { careerPace, driftMedal, lapMedal, medalFor, nextCareerTrack } from './game/career';
+import { careerPace, careerPrize, driftMedal, lapMedal, medalFor, nextCareerTrack } from './game/career';
 import { loadCustom, newDraft, writeCustom } from './game/custom';
 import { medalPay, payout, scalePayout } from './game/economy';
 import type { Mode } from './game/economy';
@@ -81,6 +82,9 @@ export default function App() {
     };
   }, []);
 
+  // a gamepad drives the menus through key events
+  useEffect(() => startPadMenu(), []);
+
   // M turns the music on and off from anywhere (the settings screen has the full set of switches)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -122,6 +126,7 @@ export default function App() {
         }}
         onRace={(c) => race(findTrack(c.id)!, 'editlist')}
         onDelete={(c) => commitCustom(custom.filter((t) => t.id !== c.id))}
+        onImport={(c) => commitCustom([...custom, { ...c, id: `custom-${Date.now().toString(36)}`, name: c.name || `CUSTOM ${custom.length + 1}` }])}
         onBack={menu}
       />
     );
@@ -148,7 +153,7 @@ export default function App() {
     const mode = modeOf(from);
     const { track } = screen;
     const noPrize = isCustom(track); // custom tracks pay nothing, or a tiny track could be farmed for money
-    const prize = DIFFICULTY[settings.difficulty].prize;
+    const prize = DIFFICULTY[settings.difficulty].prize * careerPrize(track.id);
     const keep = track.id !== TEST_ID; // a test drive leaves no records at all
     return (
       <RaceScreen

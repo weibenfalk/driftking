@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react';
-import { MAX_CUSTOM, newDraft, optsFor } from '../game/custom';
+import { MAX_CUSTOM, exportTrack, importTrack, newDraft, optsFor } from '../game/custom';
 import { ENV_IDS, CUSTOM_H, CUSTOM_W, envGround, envLabel, envRoad } from '../race/tracks';
 import type { CustomTrack } from '../race/tracks';
 import { checkTrack } from '../race/trackgen';
 import Retro from '../ui/Retro';
 import type { RetroScreen } from '../ui/Retro';
-import { C, H, W, bevel, copperBackground, header, text } from '../ui/kit';
+import { C, H, W, bevel, button, copperBackground, header, text } from '../ui/kit';
 import { drawMap, line } from '../ui/map';
 import { nav } from '../ui/nav';
 
@@ -27,13 +27,16 @@ interface ListProps {
   onNew: () => void;
   onRace: (c: CustomTrack) => void;
   onDelete: (c: CustomTrack) => void;
+  /** A track pasted in as a code; the app gives it an id and saves it. */
+  onImport: (c: CustomTrack) => void;
   onBack: () => void;
 }
 
 /** The custom tracks you have made, with a map of the highlighted one. */
-export function EditorList({ tracks, onEdit, onNew, onRace, onDelete, onBack }: ListProps) {
+export function EditorList({ tracks, onEdit, onNew, onRace, onDelete, onImport, onBack }: ListProps) {
   const [sel, setSel] = useState(0);
   const [confirm, setConfirm] = useState(false);
+  const [msg, setMsg] = useState('');
   const rows = tracks.length;
   const total = rows + 1; // the first line is "new track"
   const cur = sel > 0 ? tracks[sel - 1] : null;
@@ -41,6 +44,26 @@ export function EditorList({ tracks, onEdit, onNew, onRace, onDelete, onBack }: 
     setSel((i + total) % total);
     setConfirm(false);
   };
+
+  const share = () => {
+    if (!cur) return;
+    const code = exportTrack(cur);
+    navigator.clipboard
+      ?.writeText(code)
+      .then(() => setMsg('TRACK CODE COPIED TO THE CLIPBOARD'))
+      .catch(() => window.prompt('COPY THIS TRACK CODE', code));
+    if (!navigator.clipboard) window.prompt('COPY THIS TRACK CODE', code);
+  };
+  const paste = () => {
+    const code = window.prompt('PASTE A TRACK CODE');
+    if (code === null) return;
+    if (tracks.length >= MAX_CUSTOM) return setMsg('TRACK LIMIT REACHED');
+    const c = importTrack(code);
+    if (!c) return setMsg('THAT IS NOT A VALID TRACK CODE');
+    onImport(c);
+    setMsg('TRACK ADDED');
+  };
+  const BTN = { share: [204, 146], paste: [204, 161] } as const;
 
   const screen: RetroScreen = {
     draw(ctx) {
@@ -66,7 +89,9 @@ export function EditorList({ tracks, onEdit, onNew, onRace, onDelete, onBack }: 
       text(ctx, 'EDITED TRACKS APPEAR IN', 208, 114, C.dim, { small: true });
       text(ctx, 'EVERY LIST UNDER CUSTOM.', 208, 122, C.dim, { small: true });
       text(ctx, 'THEY PAY NO PRIZE MONEY.', 208, 134, C.gold, { small: true });
-      text(ctx, confirm ? 'PRESS X AGAIN TO DELETE' : tracks.length >= MAX_CUSTOM ? 'TRACK LIMIT REACHED' : '', W / 2, H - 24, C.red, { align: 'center' });
+      button(ctx, 'SHARE (C)', BTN.share[0], BTN.share[1], 108, 12, false, !cur);
+      button(ctx, 'IMPORT (I)', BTN.paste[0], BTN.paste[1], 108, 12, false, tracks.length >= MAX_CUSTOM);
+      text(ctx, confirm ? 'PRESS X AGAIN TO DELETE' : tracks.length >= MAX_CUSTOM ? 'TRACK LIMIT REACHED' : msg, W / 2, H - 24, confirm || tracks.length >= MAX_CUSTOM ? C.red : C.green, { align: 'center' });
       text(ctx, 'ENTER EDIT   R RACE   X DELETE   ESC BACK', W / 2, H - 10, C.ink, { align: 'center', small: true });
     },
     key(e) {
@@ -83,9 +108,15 @@ export function EditorList({ tracks, onEdit, onNew, onRace, onDelete, onBack }: 
           setSel(Math.max(0, sel - 1));
           setConfirm(false);
         } else setConfirm(true);
-      } else if (n === 'back') onBack();
+      } else if (e.key === 'c' || e.key === 'C') share();
+      else if (e.key === 'i' || e.key === 'I') paste();
+      else if (n === 'back') onBack();
     },
-    click(_x, y) {
+    click(x, y) {
+      const inBtn = (b: readonly [number, number]) => x >= b[0] && x < b[0] + 108 && y >= b[1] && y < b[1] + 12;
+      if (inBtn(BTN.share)) return share();
+      if (inBtn(BTN.paste)) return paste();
+      if (x >= 200) return;
       const i = Math.floor((y - 36) / 11);
       if (i >= 0 && i < total) {
         setSel(i);

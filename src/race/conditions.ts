@@ -1,7 +1,7 @@
 import type { Settings } from '../game/settings';
 import type { Track } from './track';
 
-/** What the weather and light are doing: a purely visual layer, grip is not affected. */
+/** What the weather and light are doing. The light is purely visual; rain and snow also cost grip (see `weatherGrip`). */
 export interface Conditions {
   weather: 'clear' | 'rain' | 'snow';
   time: 'day' | 'dusk' | 'night';
@@ -29,6 +29,16 @@ export function autoConditions(track: Track): Conditions {
   const weather = track.env === 'SNOW' ? 'snow' : track.env === 'DESERT' ? 'clear' : r1 < 0.28 ? 'rain' : 'clear';
   const time = track.env === 'CITY' ? (r2 < 0.6 ? 'night' : 'dusk') : r2 < 0.5 ? 'day' : r2 < 0.78 ? 'dusk' : 'night';
   return { weather, time };
+}
+
+/**
+ * Grip left on the road in this weather, as a multiplier on the track's own grip: rain makes the asphalt greasy and snow
+ * on a track that isn't a snow track is worse still. Snow tracks already have their low grip built in.
+ */
+export function weatherGrip(track: Pick<Track, 'env'>, weather: Conditions['weather']): number {
+  if (weather === 'rain') return 0.9;
+  if (weather === 'snow') return track.env === 'SNOW' ? 1 : 0.86;
+  return 1;
 }
 
 /** Auto uses the track's own conditions; any other setting overrides them. */

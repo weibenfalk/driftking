@@ -3,6 +3,8 @@
  * Keyboard and the on-screen pad both feed the same state, so games never
  * need to know which one the player uses.
  */
+import { padState, readPad } from './gamepad';
+
 export type Button = 'up' | 'down' | 'left' | 'right' | 'a' | 'b';
 
 export const BUTTONS: Button[] = ['up', 'down', 'left', 'right', 'a', 'b'];
@@ -65,6 +67,7 @@ export class Input {
   attach() {
     if (this.attached) return;
     this.attached = true;
+    padState.racing = true;
     window.addEventListener('keydown', this.onKeyDown);
     window.addEventListener('keyup', this.onKeyUp);
     window.addEventListener('blur', this.onBlur);
@@ -73,6 +76,7 @@ export class Input {
   detach() {
     if (!this.attached) return;
     this.attached = false;
+    padState.racing = false;
     window.removeEventListener('keydown', this.onKeyDown);
     window.removeEventListener('keyup', this.onKeyUp);
     window.removeEventListener('blur', this.onBlur);
@@ -82,7 +86,7 @@ export class Input {
 
   /** Is the button held right now? */
   down(b: Button): boolean {
-    return this.keys.has(b) || this.virtual.has(b);
+    return this.keys.has(b) || this.virtual.has(b) || !!readPad()?.held[b];
   }
 
   /** Was the button pressed since the last call? Consumes one press. */
@@ -97,6 +101,8 @@ export class Input {
 
   /** -1, 0 or 1 from left/right. */
   axisX(): number {
+    const pad = readPad();
+    if (pad && pad.x && !this.keys.has('left') && !this.keys.has('right')) return pad.x; // analog stick
     return (this.down('right') ? 1 : 0) - (this.down('left') ? 1 : 0);
   }
 

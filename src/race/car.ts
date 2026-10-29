@@ -86,6 +86,8 @@ export interface Env {
   /** The car hit a wall or tree, or another car. */
   bump(c: Car): void;
   treeHit(t: Tree): void;
+  /** Weather grip multiplier on the road (1 when dry). */
+  grip?: number;
 }
 
 /* ------------------------------------------------------------------ */
@@ -335,7 +337,7 @@ export function drive(c: Car, inp: DriveInput, dt: number, env: Env) {
   let vr = vr0;
   const grass = c.grass;
   const ground = GROUNDS[env.world.track.ground];
-  const roadGrip = env.world.track.roadGrip;
+  const roadGrip = env.world.track.roadGrip * (env.grip ?? 1);
   const st = c.stats;
   const hz = HAZARD_GRIP[c.hazard];
   const boosted = c.boost > 0 ? 1 : 0;

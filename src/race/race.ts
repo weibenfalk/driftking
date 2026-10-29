@@ -4,6 +4,9 @@ import { AI_PACE, FIELD, aiDrive } from './ai';
 import { checkBoost, collideCars, createGrid, drive, updateDraft } from './car';
 import type { Car, CarStats, Env } from './car';
 import { LapRecorder, ghostAt, ghostTimeline } from './ghost';
+import { ReplayRecorder } from './replay';
+import type { ReplayData } from './replay';
+import { weatherGrip } from './conditions';
 import type { Conditions } from './conditions';
 import type { GhostData } from './ghost';
 import { SH, SW, createRenderer } from './render';
@@ -22,6 +25,8 @@ export interface RaceResult {
   place: number;
   drift: number;
   bestLap: number | null;
+  /** Everyone's path through the race, for the replay (not in time attack). */
+  replay?: ReplayData;
 }
 
 /** A clean time attack lap, handed to the UI to be saved. */
@@ -151,6 +156,7 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
     player.idx = at;
     player.lap = 1;
   }
+  const rec = new ReplayRecorder(cars, player, !!driftMode);
   const finishers: Car[] = [];
   let parts: Part[] = [];
   let state: 'race' | 'done' = 'race';
@@ -173,7 +179,8 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
   let lapDriftStart = 0;
   let lastHazard = 0;
   let lapValid = true;
-  const DRIFT_SCALE = Math.pow(track.roadGrip, 1.5); // sliding is easy on slippery roads, so it pays less
+  const wetGrip = weatherGrip(track, (opts.conditions ?? { weather: 'clear' }).weather);
+  const DRIFT_SCALE = Math.pow(track.roadGrip * wetGrip, 1.5); // sliding is easy on slippery roads, so it pays less
   let popup: Popup | null = null;
   let banner: Banner | null = null;
   // start sequence: lamps light one by one (frames), then green and release
@@ -186,6 +193,7 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
 
   const env: Env = {
     world,
+    grip: wetGrip,
     bump: (c) => {
       if (c.ai) return;
       crash(1);
@@ -346,7 +354,7 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
     const final = Math.max(1, raceT - bonus);
     finalRaw = Math.round(final * 100);
     const place = finishers.indexOf(player) + 1;
-    onResult?.({ raw: finalRaw, time: raceT, place, drift: driftTotal, bestLap });
+    onResult?.({ raw: finalRaw, time: raceT, place, drift: driftTotal, bestLap, replay: rec.data() });
     banner = { a: place === 1 ? 'VICTORY!' : `FINISHED ${ordinal(place)}`, b: `${formatTime(raceT)} - ${bonus.toFixed(2)} S DRIFT`, t: 999 };
     api.setScore(finalRaw);
     status();
@@ -363,7 +371,7 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
     doneT = 150;
     player.ai = true;
     finalRaw = driftTotal;
-    onResult?.({ raw: finalRaw, time: raceT, place: 1, drift: driftTotal, bestLap: null });
+    onResult?.({ raw: finalRaw, time: raceT, place: 1, drift: driftTotal, bestLap: null, replay: rec.data() });
     banner = { a: 'TIME UP!', b: `${driftTotal} DRIFT POINTS`, t: 999 };
     api.setScore(finalRaw);
     [523, 659, 784].forEach((f, i) => audio.tone(f, i === 2 ? 0.3 : 0.15, 'square', 0.05, 0, i * 0.15));
@@ -498,6 +506,7 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
       }
     });
     scoreDrift(dt);
+    if (!attack) rec.tick(raceT + (flagT > 0 ? flagT / 60 : 0));
     if (attack && player.lap >= 1) recorder.tick(raceT - lapStart, player.x, player.y, player.a);
     for (const q of parts) {
       q.x += q.vx * dt;

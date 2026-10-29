@@ -7,9 +7,12 @@ import type { Attack, Medal } from '../game/save';
 import type { CarStats } from '../race/car';
 import type { Conditions } from '../race/conditions';
 import { createGame } from '../race/race';
+import { createReplay } from '../race/replay';
 import type { LapReport, RaceResult } from '../race/race';
 import type { Track } from '../race/track';
 import Crt from '../ui/Crt';
+import TouchPad from '../ui/TouchPad';
+import { wantsTouchPad } from '../ui/touch';
 import { nav } from '../ui/nav';
 import { C, H, W, bevel, button, medalChip, text } from '../ui/kit';
 
@@ -40,6 +43,14 @@ interface Props {
 }
 
 const ordinal = (n: number) => `${n}${['TH', 'ST', 'ND', 'RD'][n % 10 > 3 || Math.floor(n / 10) === 1 ? 0 : n % 10]}`;
+
+/** Where result button `i` of `n` sits (the panel is at x 40, y 22). */
+function buttonRect(n: number, i: number) {
+  const w = 52;
+  const gap = 4;
+  const total = n * w + (n - 1) * gap;
+  return { x: Math.round(W / 2 - total / 2 + i * (w + gap)), y: 22 + 126, w, h: 13 };
+}
 
 /** The result panel, drawn over the frozen last frame of the race. */
 function drawResult(ctx: CanvasRenderingContext2D, o: Outcome, mode: Mode, track: Track, labels: string[], sel: number) {
@@ -77,17 +88,21 @@ function drawResult(ctx: CanvasRenderingContext2D, o: Outcome, mode: Mode, track
     C.dim,
     { align: 'center', small: true },
   );
-  const bw = 66;
-  const gap = 6;
-  const total = labels.length * bw + (labels.length - 1) * gap;
-  labels.forEach((l, i) => button(ctx, l, W / 2 - total / 2 + i * (bw + gap), y + 126, bw, 13, i === sel));
-  text(ctx, 'LEFT RIGHT CHOOSE   ENTER GO', W / 2, y + 144, C.dim, { align: 'center', small: true });
+  labels.forEach((l, i) => {
+    const r = buttonRect(labels.length, i);
+    button(ctx, l, r.x, r.y, r.w, r.h, i === sel);
+  });
+  text(ctx, 'LEFT RIGHT CHOOSE   ENTER GO   OR CLICK', W / 2, y + 144, C.dim, { align: 'center', small: true });
 }
 
 export default function RaceScreen({ track, mode, attack, car, conditions, paceScale, onRecord, onNext, onExit }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [run, setRun] = useState(0);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
+  const [replaying, setReplaying] = useState(false);
+  const replayingRef = useRef(false);
+  replayingRef.current = replaying;
+  const frozen = useRef<{ for: Outcome; img: ImageData } | null>(null);
   const record = useRef(onRecord);
   record.current = onRecord;
   const exit = useRef(onExit);
@@ -105,6 +120,8 @@ export default function RaceScreen({ track, mode, attack, car, conditions, paceS
     const canvas = canvasRef.current;
     if (!canvas) return;
     setOutcome(null);
+    setReplaying(false);
+    frozen.current = null;
     let detail: RaceResult | undefined;
     const race = startRace(
       canvas,
@@ -142,29 +159,70 @@ export default function RaceScreen({ track, mode, attack, car, conditions, paceS
   // Esc leaves a race at any time
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') exit.current();
+      if (e.key !== 'Escape') return;
+      if (replayingRef.current) setReplaying(false);
+      else exit.current();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // the result panel: freeze the last frame and draw the panel over it
+  // the result panel: freeze the last frame and draw the panel over it; from there a replay can be played
   useEffect(() => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx || !outcome) return;
-    const labels = ['RETRY', ...(outcome.next ? ['NEXT TRACK'] : []), 'MENU'];
+    if (frozen.current?.for !== outcome) frozen.current = { for: outcome, img: ctx.getImageData(0, 0, W, H) };
+    const img = frozen.current.img;
+    const at = (e: MouseEvent) => {
+      const r = canvas.getBoundingClientRect();
+      return { x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H };
+    };
+
+    if (replaying && outcome.replay) {
+      const rp = createReplay(ctx, track, outcome.replay, condRef.current);
+      const start = performance.now();
+      let raf = 0;
+      const frame = (now: number) => {
+        if (rp.draw((now - start) / 1000)) setReplaying(false);
+        else raf = requestAnimationFrame(frame);
+      };
+      raf = requestAnimationFrame(frame);
+      const onKey = (e: KeyboardEvent) => {
+        const n = nav(e);
+        if (n === 'right' || n === 'left') rp.next((performance.now() - start) / 1000);
+        else if (n === 'ok') setReplaying(false);
+        if (n) e.preventDefault();
+      };
+      const onClick = () => rp.next((performance.now() - start) / 1000);
+      window.addEventListener('keydown', onKey);
+      canvas.addEventListener('click', onClick);
+      return () => {
+        cancelAnimationFrame(raf);
+        window.removeEventListener('keydown', onKey);
+        canvas.removeEventListener('click', onClick);
+      };
+    }
+
+    const labels = ['RETRY', ...(outcome.replay ? ['REPLAY'] : []), ...(outcome.next ? ['NEXT'] : []), 'MENU'];
     const act = (i: number) => {
       const l = labels[i];
       if (l === 'RETRY') setRun((n) => n + 1);
-      else if (l === 'NEXT TRACK') onNext(outcome.next!);
+      else if (l === 'REPLAY') setReplaying(true);
+      else if (l === 'NEXT') onNext(outcome.next!);
       else exit.current();
     };
-    const frozen = ctx.getImageData(0, 0, W, H);
+    const hit = (e: MouseEvent) => {
+      const p = at(e);
+      return labels.findIndex((_, i) => {
+        const r = buttonRect(labels.length, i);
+        return p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h;
+      });
+    };
     let sel = 0;
     let raf = 0;
     const frame = () => {
-      ctx.putImageData(frozen, 0, 0);
+      ctx.putImageData(img, 0, 0);
       drawResult(ctx, outcome, mode, track, labels, sel);
       raf = requestAnimationFrame(frame);
     };
@@ -176,16 +234,29 @@ export default function RaceScreen({ track, mode, attack, car, conditions, paceS
       else if (n === 'ok') act(sel);
       if (n) e.preventDefault();
     };
+    const onMove = (e: MouseEvent) => {
+      const i = hit(e);
+      if (i >= 0) sel = i;
+    };
+    const onClick = (e: MouseEvent) => {
+      const i = hit(e);
+      if (i >= 0) act(i);
+    };
     window.addEventListener('keydown', onKey);
+    canvas.addEventListener('mousemove', onMove);
+    canvas.addEventListener('click', onClick);
     return () => {
       cancelAnimationFrame(raf);
       window.removeEventListener('keydown', onKey);
+      canvas.removeEventListener('mousemove', onMove);
+      canvas.removeEventListener('click', onClick);
     };
-  }, [outcome, mode, track, onNext]);
+  }, [outcome, replaying, mode, track, onNext]);
 
   return (
     <Crt>
       <canvas ref={canvasRef} width={320} height={200} />
+      {!outcome && wantsTouchPad() && <TouchPad onMenu={() => exit.current()} />}
     </Crt>
   );
 }

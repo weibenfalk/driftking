@@ -87,7 +87,7 @@ export function aiDrive(c: Car, dt: number, env: Env, { player, racing, cars, pa
   let vr = vr0;
 
   const slow = STRAIGHT - aiSpd[c.idx]; // how much the next corner takes off
-  let tgt = p.skill * pace * Math.max(0.5, STRAIGHT - slow / p.corner) * (c.grass ? 0.6 : Math.sqrt(env.world.track.roadGrip));
+  let tgt = p.skill * pace * Math.max(0.5, STRAIGHT - slow / p.corner) * (c.grass ? 0.6 : Math.sqrt(env.world.track.roadGrip * (env.grip ?? 1)));
   if (c.persona && racing) {
     const gap = c.lap * N + c.idx - (player.lap * N + player.idx);
     tgt *= clamp(1 - (gap / N) * 0.12, 0.96, 1.03);
