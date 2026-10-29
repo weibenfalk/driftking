@@ -1,7 +1,8 @@
 import { drawText } from '../engine/pixelfont';
 import { TAU, formatTime } from '../engine/util';
-import { ROT, getLooks } from './car';
+import { GHOST_LOOK, ROT, getLooks } from './car';
 import type { Car } from './car';
+import type { GhostPose } from './ghost';
 import type { World } from './track';
 
 export const SW = 320;
@@ -14,7 +15,7 @@ export interface Part {
   vy: number;
   life: number;
   max: number;
-  kind: 'smoke' | 'dirt' | 'leaf';
+  kind: 'smoke' | 'dirt' | 'leaf' | 'splash';
 }
 export interface Popup {
   n: string;
@@ -40,6 +41,15 @@ export interface Hud {
   drift: number;
   chain: number;
   bestLap: number | null;
+  /** Slipstream strength 0..1 and whether a boost is running. */
+  draft: number;
+  boost: boolean;
+  /** Seconds left in a drift challenge. */
+  driftLeft?: number;
+  /** Next medal score to reach in a drift challenge, or null once gold is passed. */
+  driftNext?: number | null;
+  /** Present in time attack: lap clock, gap to the ghost (s, + is slower), and per-lap drift. */
+  attack?: { lapT: number; delta: number | null; valid: boolean; lapDrift: number; bestDrift: number | null };
 }
 
 /** Everything a frame needs from the race. */
@@ -53,6 +63,8 @@ export interface View {
   popup: Popup | null;
   banner: Banner | null;
   hud: Hud;
+  /** Where the ghost car is this frame (time attack). */
+  ghost?: GhostPose | null;
 }
 
 /** Owns a private copy of the track bitmap (so skid marks can be painted on it) and draws frames. */
@@ -80,12 +92,28 @@ export function createRenderer(ctx: CanvasRenderingContext2D, world: World) {
 
   function drawHud(v: View) {
     const h = v.hud;
-    // top left: race time, lap, position
-    panel(2, 2, 64, h.bestLap !== null ? 46 : 38);
-    drawText(ctx, formatTime(v.raceT), 6, 5, '#ffffff', { scale: 2, shadow: '#000' });
-    drawText(ctx, `LAP ${h.lap}/${h.laps}`, 6, 22, '#ffd23f', { shadow: '#000' });
-    drawText(ctx, `POS ${h.pos}/${h.total}`, 6, 30, '#f2f0ea', { shadow: '#000' });
-    if (h.bestLap !== null) drawText(ctx, `BEST ${formatTime(h.bestLap)}`, 6, 38, '#7ee0a0', { shadow: '#000' });
+    const at = h.attack;
+    if (h.driftLeft !== undefined) {
+      // drift challenge: clock, score and the next medal to chase
+      panel(2, 2, 64, 38);
+      drawText(ctx, formatTime(h.driftLeft), 6, 5, h.driftLeft < 10 ? '#e4352b' : '#ffffff', { scale: 2, shadow: '#000' });
+      drawText(ctx, `SCORE ${h.drift}`, 6, 22, '#ffd23f', { shadow: '#000' });
+      drawText(ctx, h.driftNext != null ? `NEXT ${h.driftNext}` : 'GOLD!', 6, 30, '#7ee0a0', { shadow: '#000' });
+    } else if (at) {
+      // time attack: lap clock, best lap and the live gap to the ghost
+      panel(2, 2, 64, 46);
+      drawText(ctx, formatTime(at.lapT), 6, 5, at.valid ? '#ffffff' : '#e4352b', { scale: 2, shadow: '#000' });
+      drawText(ctx, h.lap < 1 ? 'OUT LAP' : at.valid ? `LAP ${h.lap}` : 'INVALID LAP', 6, 22, at.valid ? '#ffd23f' : '#e4352b', { shadow: '#000' });
+      drawText(ctx, h.bestLap !== null ? `BEST ${formatTime(h.bestLap)}` : 'BEST --:--.--', 6, 30, '#7ee0a0', { shadow: '#000' });
+      if (at.delta !== null) drawText(ctx, `${at.delta > 0 ? '+' : '-'}${Math.abs(at.delta).toFixed(2)}`, 6, 38, at.delta > 0 ? '#ff6a5a' : '#7ee0a0', { shadow: '#000' });
+    } else {
+      // top left: race time, lap, position
+      panel(2, 2, 64, h.bestLap !== null ? 46 : 38);
+      drawText(ctx, formatTime(v.raceT), 6, 5, '#ffffff', { scale: 2, shadow: '#000' });
+      drawText(ctx, `LAP ${h.lap}/${h.laps}`, 6, 22, '#ffd23f', { shadow: '#000' });
+      drawText(ctx, `POS ${h.pos}/${h.total}`, 6, 30, '#f2f0ea', { shadow: '#000' });
+      if (h.bestLap !== null) drawText(ctx, `BEST ${formatTime(h.bestLap)}`, 6, 38, '#7ee0a0', { shadow: '#000' });
+    }
 
     // bottom left: speed and gauge
     panel(2, SH - 30, 78, 28);
@@ -100,8 +128,11 @@ export function createRenderer(ctx: CanvasRenderingContext2D, world: World) {
 
     // bottom right: drift score and the chain being built
     panel(SW - 92, SH - 30, 90, 28);
-    drawText(ctx, 'DRIFT', SW - 88, SH - 26, '#aab0c8', { shadow: '#000' });
-    drawText(ctx, String(h.drift), SW - 6, SH - 27, '#ffd23f', { scale: 2, align: 'right', shadow: '#000' });
+    drawText(ctx, at ? 'LAP DRIFT' : h.driftLeft !== undefined ? 'SCORE' : 'DRIFT', SW - 88, SH - 26, '#aab0c8', { shadow: '#000' });
+    drawText(ctx, String(at ? at.lapDrift : h.drift), SW - 6, SH - 27, '#ffd23f', { scale: 2, align: 'right', shadow: '#000' });
+    if (at && at.bestDrift !== null) drawText(ctx, `BEST ${at.bestDrift}`, SW - 88, SH - 12, '#7ee0a0', { shadow: '#000' });
+    if (h.boost) drawText(ctx, 'BOOST', 84, SH - 12, '#5ae6ff', { shadow: '#000' });
+    else if (h.draft > 0.25) drawText(ctx, 'DRAFT', 84, SH - 12, '#aab0c8', { shadow: '#000' });
     if (h.chain > 0) drawText(ctx, `+${Math.round(h.chain)}`, SW - 6, SH - 12, '#ff9a3a', { align: 'right', shadow: '#000' });
   }
 
@@ -119,6 +150,10 @@ export function createRenderer(ctx: CanvasRenderingContext2D, world: World) {
         ctx.globalAlpha = a * 0.6;
         ctx.fillStyle = a > 0.5 ? '#e8e8ee' : '#b8bac6';
         ctx.fillRect(x - (r >> 1), y - (r >> 1), r, r);
+      } else if (q.kind === 'splash') {
+        ctx.globalAlpha = a;
+        ctx.fillStyle = '#b8dcf4';
+        ctx.fillRect(x, y, 1, 1);
       } else if (q.kind === 'dirt') {
         ctx.globalAlpha = 1;
         ctx.fillStyle = Math.random() < 0.5 ? '#6b4a2a' : '#4a8a34';
@@ -130,6 +165,13 @@ export function createRenderer(ctx: CanvasRenderingContext2D, world: World) {
       }
     }
     ctx.globalAlpha = 1;
+    if (v.ghost) {
+      const g = v.ghost;
+      const fr = ((Math.round((g.a / TAU) * ROT) % ROT) + ROT) % ROT;
+      ctx.globalAlpha = 0.5;
+      ctx.drawImage(looks[GHOST_LOOK].frames[fr], Math.round(g.x - ox) - 9, Math.round(g.y - oy) - 9);
+      ctx.globalAlpha = 1;
+    }
     for (const c of cars) {
       const fr = ((Math.round((c.a / TAU) * ROT) % ROT) + ROT) % ROT;
       const L = looks[c.look];

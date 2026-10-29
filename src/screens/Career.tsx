@@ -1,7 +1,8 @@
 import { CUPS, UNLOCK_POINTS, cupPoints, cupTracks, cupUnlocked } from '../game/career';
 import type { Save } from '../game/save';
 import type { Track } from '../race/track';
-import { Header, TrackRow } from './ui';
+import { rowFor } from './rows';
+import { Header } from './ui';
 
 export default function Career({ save, onPick, onBack }: { save: Save; onPick: (t: Track) => void; onBack: () => void }) {
   return (
@@ -15,9 +16,7 @@ export default function Career({ save, onPick, onBack }: { save: Save; onPick: (
               <h2>
                 {cup.name} <span>{open ? `${cupPoints(save, cup)}/12 POINTS` : `LOCKED: ${UNLOCK_POINTS} POINTS IN ${CUPS[i - 1].name}`}</span>
               </h2>
-              {cupTracks(cup).map((t) => (
-                <TrackRow key={t.id} track={t} best={save.best[t.id]} locked={!open} onPick={() => onPick(t)} />
-              ))}
+              {cupTracks(cup).map((t) => rowFor('race', save, t, () => onPick(t), !open))}
             </section>
           );
         })}

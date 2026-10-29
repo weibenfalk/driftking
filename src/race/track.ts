@@ -1,4 +1,4 @@
-import { TAU, clamp, rnd, wrapAngle } from '../engine/util';
+import { TAU, clamp, mulberry32, rnd, wrapAngle } from '../engine/util';
 
 type RGB = [number, number, number];
 
@@ -69,6 +69,18 @@ export const CURB = 2;
 export const SOLID = 3;
 export const WATER = 4;
 
+export const HAZ_NONE = 0;
+export const HAZ_PUDDLE = 1;
+export const HAZ_OIL = 2;
+
+/** A boost strip on the road: centre and driving direction. */
+export interface BoostPad {
+  x: number;
+  y: number;
+  tx: number;
+  ty: number;
+}
+
 export interface World {
   track: Track;
   w: number;
@@ -80,6 +92,8 @@ export interface World {
   base: ImageData;
   surf: Uint8Array; // GRASS, ASPHALT, CURB, SOLID or WATER
   trees: Tree[];
+  boosts: BoostPad[];
+  hazard: Uint8Array; // HAZ_* per pixel: puddles and oil on the road
   mini: HTMLCanvasElement;
 }
 
@@ -97,6 +111,13 @@ export function surfAt(world: World, x: number, y: number) {
   y |= 0;
   if (x < 0 || y < 0 || x >= world.w || y >= world.h) return GRASS;
   return world.surf[y * world.w + x];
+}
+
+export function hazardAt(world: World, x: number, y: number) {
+  x |= 0;
+  y |= 0;
+  if (x < 0 || y < 0 || x >= world.w || y >= world.h) return HAZ_NONE;
+  return world.hazard[y * world.w + x];
 }
 
 /** Closest centre-line sample to (x, y) within a window around `from`: cheap per-frame progress tracking. */
@@ -199,7 +220,7 @@ function turnAhead(S: Sample[]) {
 }
 
 /** Target speed for AI cars: slower before sharp corners, looking 26 samples ahead for the tightest one. */
-function aiSpeeds(S: Sample[]) {
+export function aiSpeeds(S: Sample[]) {
   const N = S.length;
   const turn = turnAhead(S);
   const raw = new Float32Array(N);
@@ -211,6 +232,11 @@ function aiSpeeds(S: Sample[]) {
     aiSpd[i] = m;
   }
   return aiSpd;
+}
+
+/** Length of one lap in pixels. */
+export function trackLength(track: Track) {
+  return sampleCenterline(track.cp).N * 4;
 }
 
 /** Seconds a clean lap-after-lap run at AI target pace takes. Medal targets are multiples of this. */
@@ -342,9 +368,9 @@ function paintStart(put: Put, s0: Sample, half: number) {
       const col = (Math.floor((u + half) / 3) + Math.floor((v + 4) / 3)) % 2 ? [245, 245, 245] : [20, 20, 24];
       put(s0.x + s0.nx * u + s0.tx * v, s0.y + s0.ny * u + s0.ty * v, col, ASPHALT);
     }
-  for (let g = 0; g < 4; g++) {
-    const back = 22 + g * 18;
-    const lat = g % 2 ? 12 : -12;
+  for (let g = 0; g < 8; g++) {
+    const back = 22 + (g >> 1) * 18 + (g & 1) * 9;
+    const lat = g & 1 ? 12 : -12;
     const cx = s0.x - s0.tx * back + s0.nx * lat;
     const cy = s0.y - s0.ty * back + s0.ny * lat;
     for (let u = -6; u <= 6; u += 0.5) put(cx + s0.nx * u - s0.tx * 7, cy + s0.ny * u - s0.ty * 7, [230, 230, 230]);
@@ -468,6 +494,74 @@ function paintLake(put: Put, surf: Uint8Array, track: Track) {
     }
 }
 
+/** Boost strips go on the long straights, spread round the lap and away from the start grid. */
+function placeBoosts(S: Sample[]): { pad: BoostPad; idx: number }[] {
+  const N = S.length;
+  const turn = turnAhead(S);
+  const out: { pad: BoostPad; idx: number }[] = [];
+  let last = -1e9;
+  for (let i = 80; i < N - 60 && out.length < 4; i++) {
+    let straight = true;
+    for (let k = 0; k < 30 && straight; k++) if (turn[(i + k) % N] > 0.14) straight = false;
+    if (!straight || i - last < N / 5) continue;
+    const s = S[i + 15];
+    out.push({ pad: { x: s.x, y: s.y, tx: s.tx, ty: s.ty }, idx: i + 15 });
+    last = i;
+  }
+  return out;
+}
+
+function paintBoost(put: Put, p: BoostPad) {
+  const nx = -p.ty;
+  const ny = p.tx;
+  for (let u = -14; u <= 14; u += 0.5)
+    for (let v = -12; v <= 12; v += 0.5) {
+      let c: number[] = [16, 24, 48];
+      if (Math.abs(u) >= 13 || Math.abs(v) >= 11.5) c = [255, 230, 60];
+      else if ((((v + Math.abs(u) * 0.5 + 100) % 8) + 8) % 8 < 3) c = [90, 230, 255];
+      put(p.x + nx * u + p.tx * v, p.y + ny * u + p.ty * v, c);
+    }
+}
+
+/** Puddles (less grip) and oil (almost none) scattered on the asphalt. Same track, same spots. */
+function paintHazards(put: Put, surf: Uint8Array, hazard: Uint8Array, track: Track, S: Sample[], hw: Float32Array, avoid: number[]) {
+  const { width: WW, height: WH } = track;
+  const N = S.length;
+  let h = 2166136261;
+  for (const ch of track.id) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
+  const rng = mulberry32(h >>> 0);
+  const placed: number[] = [...avoid];
+  const kinds = [HAZ_PUDDLE, HAZ_PUDDLE, HAZ_OIL, HAZ_PUDDLE, HAZ_PUDDLE, HAZ_OIL, HAZ_PUDDLE, HAZ_OIL, HAZ_PUDDLE];
+  for (const kind of kinds) {
+    let idx = -1;
+    for (let t = 0; t < 40 && idx < 0; t++) {
+      const i = 80 + Math.floor(rng() * (N - 140));
+      if (placed.every((p) => Math.min(Math.abs(p - i), N - Math.abs(p - i)) > 24)) idx = i;
+    }
+    if (idx < 0) continue;
+    placed.push(idx);
+    const s = S[idx];
+    const lat = (rng() - 0.5) * 2 * hw[idx] * 0.6;
+    const cx = s.x + s.nx * lat;
+    const cy = s.y + s.ny * lat;
+    const rA = kind === HAZ_PUDDLE ? 11 + rng() * 6 : 8 + rng() * 3; // across the road
+    const rB = kind === HAZ_PUDDLE ? rA * 0.7 : rA; // along it
+    for (let dy = -rA - 2; dy <= rA + 2; dy += 0.5)
+      for (let dx = -rA - 2; dx <= rA + 2; dx += 0.5) {
+        // dx runs across the road (normal), dy along it (tangent)
+        const e = (dx / rA) ** 2 + (dy / rB) ** 2 + Math.sin(dx * 0.5 + dy * 0.3) * 0.06;
+        if (e > 1) continue;
+        const X = Math.floor(cx + s.nx * dx + s.tx * dy);
+        const Y = Math.floor(cy + s.ny * dx + s.ty * dy);
+        if (X < 0 || Y < 0 || X >= WW || Y >= WH || surf[Y * WW + X] !== ASPHALT) continue;
+        hazard[Y * WW + X] = kind;
+        const spark = Math.random();
+        const c = kind === HAZ_PUDDLE ? (spark < 0.08 ? [130, 180, 220] : [46, 80, 126]) : spark < 0.1 ? [80, 46, 110] : [20, 18, 28];
+        put(X, Y, c);
+      }
+  }
+}
+
 function makeMinimap(S: Sample[], WW: number, WH: number) {
   const mini = document.createElement('canvas');
   mini.width = 70;
@@ -487,8 +581,12 @@ export function buildWorld(track: Track): World {
   const { img, surf, put } = paintTerrain(track, S, hw);
   paintStart(put, S[0], track.halfWidth);
   paintGrandstand(put, S[0], track.halfWidth);
+  const boosts = placeBoosts(S);
+  for (const b of boosts) paintBoost(put, b.pad);
+  const hazard = new Uint8Array(track.width * track.height);
+  paintHazards(put, surf, hazard, track, S, hw, boosts.map((b) => b.idx));
   const trees = plantProps(put, surf, track);
   if (track.lake) paintLake(put, surf, track);
   const mini = makeMinimap(S, track.width, track.height);
-  return { track, w: track.width, h: track.height, S, N, aiSpd, hw, base: img, surf, trees, mini };
+  return { track, w: track.width, h: track.height, S, N, aiSpd, hw, base: img, surf, trees, boosts: boosts.map((b) => b.pad), hazard, mini };
 }

@@ -1,11 +1,13 @@
 import type { GameApi, GameInstance } from '../engine/types';
 import { clamp, formatTime, rnd } from '../engine/util';
-import { aiDrive } from './ai';
-import { collideCars, createGrid, drive } from './car';
-import type { Car, Env } from './car';
+import { FIELD, aiDrive } from './ai';
+import { checkBoost, collideCars, createGrid, drive, updateDraft } from './car';
+import type { Car, CarStats, Env } from './car';
+import { LapRecorder, ghostAt, ghostTimeline } from './ghost';
+import type { GhostData } from './ghost';
 import { SH, SW, createRenderer } from './render';
 import type { Banner, Part, Popup } from './render';
-import { ASPHALT, CURB, WATER, getWorld, globalIdx, nearestIdx, surfAt } from './track';
+import { ASPHALT, CURB, HAZ_OIL, HAZ_PUDDLE, WATER, getWorld, globalIdx, nearestIdx, surfAt } from './track';
 import type { Track } from './track';
 
 const OFFROAD = 55; // grass beyond the curb before the player is reset
@@ -21,7 +23,40 @@ export interface RaceResult {
   bestLap: number | null;
 }
 
-export function createGame(api: GameApi, track: Track, onResult?: (r: RaceResult) => void): GameInstance {
+/** A clean time attack lap, handed to the UI to be saved. */
+export interface LapReport {
+  /** Lap time in 1/100 s. */
+  lap: number;
+  /** Drift points banked during the lap. */
+  drift: number;
+  ghost: GhostData;
+}
+
+export interface GameOptions {
+  /** The player's car: sprite look and physics multipliers. Defaults to the stock car. */
+  car?: { look: number; stats: CarStats };
+  onResult?: (r: RaceResult) => void;
+  /**
+   * Time attack: the player drives alone and laps never end. Laps are timed from the start line, the saved best
+   * lap plays as a ghost, and only laps without a reset (off track, water) or reversing count.
+   */
+  attack?: {
+    best: { lap: number; ghost: GhostData; drift: number } | null;
+    /** Stores the lap; returns the medal it earned and the money paid, for the banner. */
+    onLap: (r: LapReport) => { medal: number; earned: number } | void;
+  };
+  /**
+   * Drift challenge: the player drives alone for `limit` seconds and the score is the drift points banked.
+   * No laps, no finish line; the run ends when the clock does.
+   */
+  drift?: { limit: number; /** Bronze, silver, gold scores, for the HUD's next-target line. */ targets: number[] };
+}
+
+const ordinal = (n: number) => `${n}${['TH', 'ST', 'ND', 'RD'][n % 10 > 3 || Math.floor(n / 10) === 1 ? 0 : n % 10]}`.toUpperCase();
+
+export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): GameInstance {
+  const { onResult, attack } = opts;
+  const driftMode = opts.drift;
   const { input, audio } = api;
   const world = getWorld(track);
   const { S, N, hw } = world;
@@ -81,7 +116,8 @@ export function createGame(api: GameApi, track: Track, onResult?: (r: RaceResult
   };
 
   // race state
-  const cars = createGrid(world);
+  const grid = createGrid(world, FIELD, opts.car?.look, opts.car?.stats);
+  const cars = attack || driftMode ? grid.filter((c) => !c.ai) : grid;
   const player = cars.find((c) => !c.ai)!;
   const finishers: Car[] = [];
   let parts: Part[] = [];
@@ -96,7 +132,16 @@ export function createGame(api: GameApi, track: Track, onResult?: (r: RaceResult
   let chainT = 0;
   let lapStart = 0;
   let lapTime = 0;
-  let bestLap: number | null = null;
+  let bestLap: number | null = attack?.best ? attack.best.lap / 100 : null;
+  // time attack
+  let best = attack?.best ?? null;
+  let ghostData: GhostData | null = best?.ghost ?? null;
+  let timeline = ghostData ? ghostTimeline(world, ghostData) : null;
+  let recorder = new LapRecorder();
+  let lapDriftStart = 0;
+  let lastHazard = 0;
+  let lapValid = true;
+  const DRIFT_SCALE = Math.pow(track.roadGrip, 1.5); // sliding is easy on slippery roads, so it pays less
   let popup: Popup | null = null;
   let banner: Banner | null = { a: 'GO!', b: '', t: 50 };
 
@@ -119,7 +164,7 @@ export function createGame(api: GameApi, track: Track, onResult?: (r: RaceResult
   function status() {
     const items = [
       { label: 'LAP', value: `${clamp(player.lap, 1, LAPS)}/${LAPS}` },
-      { label: 'POS', value: `${position()}/4` },
+      { label: 'POS', value: `${position()}/${cars.length}` },
       { label: 'DRIFT', value: driftTotal },
     ];
     const key = JSON.stringify(items);
@@ -166,6 +211,7 @@ export function createGame(api: GameApi, track: Track, onResult?: (r: RaceResult
     const g = S[gi];
     const far = Math.hypot(player.x - g.x, player.y - g.y) > hw[gi] + OFFROAD;
     if (sf !== WATER && !far) return;
+    lapValid = false;
     const s = S[safeIdx];
     player.x = s.x;
     player.y = s.y;
@@ -183,13 +229,21 @@ export function createGame(api: GameApi, track: Track, onResult?: (r: RaceResult
   function crossed(c: Car, dir: number) {
     if (dir < 0) {
       c.lap--;
+      if (attack && !c.ai) lapValid = false;
       return;
     }
     c.lap++;
-    if (!c.ai && c.lap >= 2) {
-      lapTime = raceT - lapStart;
-      lapStart = raceT;
-      if (bestLap === null || lapTime < bestLap) bestLap = lapTime;
+    if (driftMode) return; // laps mean nothing in a drift challenge
+    if (attack && !c.ai) {
+      attackLap();
+      return;
+    }
+    if (!c.ai) {
+      if (c.lap >= 2) {
+        lapTime = raceT - lapStart;
+        if (bestLap === null || lapTime < bestLap) bestLap = lapTime;
+      }
+      lapStart = raceT; // laps are timed from the line, not from the grid
     }
     if (c.done) return;
     if (c.lap > LAPS) {
@@ -202,6 +256,40 @@ export function createGame(api: GameApi, track: Track, onResult?: (r: RaceResult
       banner = { a: 'FINAL LAP', b: `LAP ${c.lap - 1} ${formatTime(lapTime)}`, t: 80 };
       audio.tone(784, 0.1, 'square', 0.04);
     }
+  }
+
+  /** Player crossed the line in time attack: close the lap that just ended (if there was one) and start the next. */
+  function attackLap() {
+    if (player.lap >= 2) {
+      const t = raceT - lapStart;
+      if (!lapValid) {
+        banner = { a: 'INVALID LAP', b: formatTime(t), t: 70 };
+      } else {
+        const lap = Math.round(t * 100);
+        const drift = driftTotal - lapDriftStart;
+        const newLap = !best || lap < best.lap;
+        const newDrift = !best || drift > best.drift;
+        const ghost = recorder.finish(player.x, player.y, player.a);
+        const paid = attack!.onLap({ lap, drift, ghost });
+        const gap = best ? (lap - best.lap) / 100 : 0;
+        best = { lap: newLap ? lap : best!.lap, ghost: newLap ? ghost : best!.ghost, drift: newDrift ? drift : best!.drift };
+        if (newLap) {
+          ghostData = ghost;
+          timeline = ghostTimeline(world, ghost);
+          bestLap = t;
+        }
+        const money = paid && paid.earned > 0 ? `  +$${paid.earned}` : '';
+        banner = newLap
+          ? { a: 'NEW BEST LAP', b: formatTime(t) + money, t: 90 }
+          : { a: `LAP ${player.lap - 1}`, b: `${formatTime(t)}  +${gap.toFixed(2)}${money}`, t: 70 };
+        if (newLap) [523, 659, 784].forEach((f, i) => audio.tone(f, 0.12, 'square', 0.04, 0, i * 0.1));
+        else if (newDrift) audio.tone(660, 0.1, 'square', 0.04);
+      }
+    }
+    lapStart = raceT;
+    lapDriftStart = driftTotal;
+    lapValid = true;
+    recorder = new LapRecorder();
   }
 
   function finish() {
@@ -217,9 +305,25 @@ export function createGame(api: GameApi, track: Track, onResult?: (r: RaceResult
     finalRaw = Math.round(final * 100);
     const place = finishers.indexOf(player) + 1;
     onResult?.({ raw: finalRaw, time: raceT, place, drift: driftTotal, bestLap });
-    banner = { a: place === 1 ? 'VICTORY!' : `FINISHED ${['1ST', '2ND', '3RD', '4TH'][place - 1]}`, b: `${formatTime(raceT)} - ${bonus.toFixed(2)} S DRIFT`, t: 999 };
+    banner = { a: place === 1 ? 'VICTORY!' : `FINISHED ${ordinal(place)}`, b: `${formatTime(raceT)} - ${bonus.toFixed(2)} S DRIFT`, t: 999 };
     api.setScore(finalRaw);
     status();
+    [523, 659, 784].forEach((f, i) => audio.tone(f, i === 2 ? 0.3 : 0.15, 'square', 0.05, 0, i * 0.15));
+  }
+
+  /** The clock ran out in a drift challenge: bank what's pending and report the score. */
+  function finishDrift() {
+    if (chain >= 25) {
+      driftTotal += Math.round(chain);
+      chain = 0;
+    }
+    state = 'done';
+    doneT = 150;
+    player.ai = true;
+    finalRaw = driftTotal;
+    onResult?.({ raw: finalRaw, time: raceT, place: 1, drift: driftTotal, bestLap: null });
+    banner = { a: 'TIME UP!', b: `${driftTotal} DRIFT POINTS`, t: 999 };
+    api.setScore(finalRaw);
     [523, 659, 784].forEach((f, i) => audio.tone(f, i === 2 ? 0.3 : 0.15, 'square', 0.05, 0, i * 0.15));
   }
 
@@ -232,7 +336,7 @@ export function createGame(api: GameApi, track: Track, onResult?: (r: RaceResult
         loseChain();
         return;
       }
-      chain += ang * sp * dt * 1.6;
+      chain += ang * sp * dt * 1.6 * DRIFT_SCALE;
       chainT = 20;
       popup = { n: String(Math.round(chain)), l: ang > 0.75 ? 'WILD DRIFT' : ang > 0.45 ? 'NICE DRIFT' : 'DRIFT', t: 30 };
     } else if (chain > 0 && (chainT -= dt) <= 0) {
@@ -258,6 +362,8 @@ export function createGame(api: GameApi, track: Track, onResult?: (r: RaceResult
     for (const side of [-3, 3]) {
       const wx = c.x - fx * 4 + rx * side;
       const wy = c.y - fy * 4 + ry * side;
+      if (c.hazard === HAZ_PUDDLE && sp > 1.2 && Math.random() < 0.6 * dt)
+        parts.push({ x: wx, y: wy, vx: -c.vx * 0.2 + rnd(-0.5, 0.5), vy: -c.vy * 0.2 + rnd(-0.5, 0.5), life: 18, max: 18, kind: 'splash' });
       if (sliding && !c.grass) {
         renderer.skid(wx, wy);
         if (Math.random() < 0.35 * dt) parts.push({ x: wx, y: wy, vx: -c.vx * 0.15 + rnd(-0.2, 0.2), vy: -c.vy * 0.15 + rnd(-0.2, 0.2), life: 40, max: 40, kind: 'smoke' });
@@ -274,8 +380,11 @@ export function createGame(api: GameApi, track: Track, onResult?: (r: RaceResult
     if (banner && banner.t < 900 && (banner.t -= dt) <= 0) banner = null;
     if (popup && (popup.t -= dt) <= 0 && chain === 0) popup = null;
 
+    updateDraft(cars, dt);
+    if (driftMode && state === 'race' && raceT >= driftMode.limit) finishDrift();
     for (const c of cars) {
-      if (c.ai) aiDrive(c, dt, env, { player, racing: state === 'race' });
+      c.boost = Math.max(0, c.boost - dt);
+      if (c.ai) aiDrive(c, dt, env, { player, racing: state === 'race', cars });
       else
         drive(
           c,
@@ -289,6 +398,16 @@ export function createGame(api: GameApi, track: Track, onResult?: (r: RaceResult
           env,
         );
       trackProgress(c);
+      if (checkBoost(c, world) && !c.ai) {
+        popup = { n: 'BOOST!', l: 'FULL POWER', t: 30 };
+        audio.tone(880, 0.12, 'square', 0.04);
+        audio.tone(1320, 0.12, 'square', 0.04, 0, 0.08);
+      }
+      if (!c.ai && c.hazard !== lastHazard) {
+        if (c.hazard === HAZ_OIL) popup = { n: 'OIL!', l: 'NO GRIP', t: 40, miss: true };
+        else if (c.hazard === HAZ_PUDDLE) popup = { n: 'WET!', l: 'LESS GRIP', t: 30, miss: true };
+        lastHazard = c.hazard;
+      }
       if (!c.ai && state === 'race') recover();
       effects(c, dt);
     }
@@ -299,6 +418,7 @@ export function createGame(api: GameApi, track: Track, onResult?: (r: RaceResult
       }
     });
     scoreDrift(dt);
+    if (attack && player.lap >= 1) recorder.tick(raceT - lapStart, player.x, player.y, player.a);
     for (const q of parts) {
       q.x += q.vx * dt;
       q.y += q.vy * dt;
@@ -333,7 +453,11 @@ export function createGame(api: GameApi, track: Track, onResult?: (r: RaceResult
   const TOP_SPEED = 4.6; // px/frame, a little above what the car reaches on asphalt
   const draw = () => {
     const sp = Math.hypot(player.vx, player.vy);
+    const running = !!attack && player.lap >= 1;
+    const lapT = running ? raceT - lapStart : 0;
+    const gap = running && timeline ? lapT - timeline[player.idx] : NaN;
     renderer.draw({
+      ghost: running && ghostData ? ghostAt(ghostData, lapT) : null,
       cars,
       player,
       parts,
@@ -343,15 +467,22 @@ export function createGame(api: GameApi, track: Track, onResult?: (r: RaceResult
       popup,
       banner,
       hud: {
-        lap: clamp(player.lap, 1, LAPS),
+        lap: attack ? player.lap : clamp(player.lap, 1, LAPS),
         laps: LAPS,
-        pos: position(),
+        pos: attack ? 1 : position(),
         total: cars.length,
         kmh: Math.round(sp * 40),
-        speedFrac: clamp(sp / TOP_SPEED, 0, 1),
+        speedFrac: clamp(sp / (TOP_SPEED * player.stats.top), 0, 1),
         drift: driftTotal,
         chain,
         bestLap,
+        draft: player.draft,
+        boost: player.boost > 0,
+        driftLeft: driftMode ? Math.max(0, driftMode.limit - raceT) : undefined,
+        driftNext: driftMode ? (driftMode.targets.find((t) => t > driftTotal) ?? null) : undefined,
+        attack: attack
+          ? { lapT, delta: Number.isNaN(gap) ? null : gap, valid: lapValid, lapDrift: driftTotal - lapDriftStart, bestDrift: best?.drift ?? null }
+          : undefined,
       },
     });
   };

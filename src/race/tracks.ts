@@ -1,4 +1,5 @@
-import { generateCenterline, lakeSpot, mulberry32 } from './trackgen';
+import { mulberry32 } from '../engine/util';
+import { generateCenterline, lakeSpot } from './trackgen';
 import type { GenOpts } from './trackgen';
 import type { Ground, Props, Theme, Track } from './track';
 

@@ -1,4 +1,4 @@
-import { parTime } from '../race/track';
+import { parTime, trackLength } from '../race/track';
 import type { Track } from '../race/track';
 import { findTrack } from '../race/tracks';
 import type { Medal, Save } from './save';
@@ -65,4 +65,47 @@ export function nextCareerTrack(save: Save, track: Track): Track | null {
   const ti = CUPS[ci].trackIds.indexOf(track.id);
   const nextId = CUPS[ci].trackIds[ti + 1] ?? (cupUnlocked(save, ci + 1) ? CUPS[ci + 1]?.trackIds[0] : undefined);
   return (nextId && findTrack(nextId)) || null;
+}
+
+/** Seconds a drift challenge lasts. */
+export const DRIFT_LIMIT = 90;
+
+/*
+ * Time attack medals: a clean flying lap against the AI-pace lap (par per lap) with the same kind of factors as
+ * races, but no standing-start allowance.
+ */
+const lapCache = new Map<string, { gold: number; silver: number; bronze: number }>();
+
+/** Target lap times in 1/100 s. */
+export function lapTargets(track: Track) {
+  let t = lapCache.get(track.id);
+  if (!t) {
+    const lap = parTime(track) / track.laps;
+    const at = (f: number) => Math.round(lap * f * 100);
+    lapCache.set(track.id, (t = { gold: at(FACTORS.gold), silver: at(FACTORS.silver), bronze: at(FACTORS.bronze) }));
+  }
+  return t;
+}
+
+export function lapMedal(track: Track, lapRaw: number): Medal {
+  const t = lapTargets(track);
+  return lapRaw <= t.gold ? 3 : lapRaw <= t.silver ? 2 : lapRaw <= t.bronze ? 1 : 0;
+}
+
+/*
+ * Drift challenge targets scale with track length (more road, more corners in 90 s). Like the other targets these
+ * are first guesses and need tuning against real runs.
+ */
+const DRIFT_BASE = { bronze: 600, silver: 1500, gold: 2800 };
+
+/** Target drift scores. */
+export function driftTargets(track: Track) {
+  const k = trackLength(track) / 3500;
+  const at = (n: number) => Math.round((n * k) / 50) * 50;
+  return { bronze: at(DRIFT_BASE.bronze), silver: at(DRIFT_BASE.silver), gold: at(DRIFT_BASE.gold) };
+}
+
+export function driftMedal(track: Track, score: number): Medal {
+  const t = driftTargets(track);
+  return score >= t.gold ? 3 : score >= t.silver ? 2 : score >= t.bronze ? 1 : 0;
 }
