@@ -10,7 +10,18 @@ import type { Track } from './track';
 
 const OFFROAD = 55; // grass beyond the curb before the player is reset
 
-export function createGame(api: GameApi, track: Track): GameInstance {
+/** What the player did, handed to the UI when they cross the line. */
+export interface RaceResult {
+  /** Final score in 1/100 s: race time minus the drift bonus. */
+  raw: number;
+  /** Race time without the bonus, in seconds. */
+  time: number;
+  place: number;
+  drift: number;
+  bestLap: number | null;
+}
+
+export function createGame(api: GameApi, track: Track, onResult?: (r: RaceResult) => void): GameInstance {
   const { input, audio } = api;
   const world = getWorld(track);
   const { S, N, hw } = world;
@@ -205,6 +216,7 @@ export function createGame(api: GameApi, track: Track): GameInstance {
     const final = Math.max(1, raceT - bonus);
     finalRaw = Math.round(final * 100);
     const place = finishers.indexOf(player) + 1;
+    onResult?.({ raw: finalRaw, time: raceT, place, drift: driftTotal, bestLap });
     banner = { a: place === 1 ? 'VICTORY!' : `FINISHED ${['1ST', '2ND', '3RD', '4TH'][place - 1]}`, b: `${formatTime(raceT)} - ${bonus.toFixed(2)} S DRIFT`, t: 999 };
     api.setScore(finalRaw);
     status();

@@ -186,6 +186,7 @@ export const TRACKS: Track[] = [
   generated('downtown', 'DOWNTOWN', 'city', 13),
   generated('harbor', 'HARBOR', 'city', 29),
   generated('neon-alley', 'NEON ALLEY', 'city', 61),
+  generated('skyline', 'SKYLINE', 'city', 83),
 ];
 
 /** Everyone gets the same track on the same (UTC) day. */
@@ -197,4 +198,15 @@ export function dailyTrack(date = new Date()): Track {
   const envs = Object.keys(ENVS) as EnvId[];
   const env = envs[seed % envs.length];
   return generated(`daily-${key}`, `DAILY ${key}`, env, seed);
+}
+
+let daily: Track | null = null;
+
+/** Every track including today's daily one. */
+export function allTracks(): Track[] {
+  return [...TRACKS, (daily ??= dailyTrack())];
+}
+
+export function findTrack(id: string): Track | undefined {
+  return allTracks().find((t) => t.id === id);
 }

@@ -213,6 +213,15 @@ function aiSpeeds(S: Sample[]) {
   return aiSpd;
 }
 
+/** Seconds a clean lap-after-lap run at AI target pace takes. Medal targets are multiples of this. */
+export function parTime(track: Track) {
+  const { S } = sampleCenterline(track.cp);
+  const aiSpd = aiSpeeds(S);
+  let frames = 0;
+  for (let i = 0; i < S.length; i++) frames += 4 / (aiSpd[i] * Math.sqrt(track.roadGrip));
+  return (frames / 60) * track.laps;
+}
+
 /** The road widens in corners: how sharply it turns ahead, spread out smoothly. */
 function roadWidths(S: Sample[], half: number, extra: number) {
   const N = S.length;
