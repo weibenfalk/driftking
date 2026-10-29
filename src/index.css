@@ -13,3 +13,10 @@ canvas {
 }
 .result button { font: inherit; padding: 8px 16px; cursor: pointer; }
 .result button:focus-visible { outline: 3px solid #ff0; }
+
+.tracks { position: absolute; left: 8px; bottom: 8px; display: flex; gap: 6px; }
+.tracks button {
+  font: inherit; font-size: 12px; padding: 4px 8px; cursor: pointer;
+  background: #1a1a2a; color: #aab; border: 1px solid #445;
+}
+.tracks button[aria-pressed='true'] { color: #fff; border-color: #ffd23f; }
