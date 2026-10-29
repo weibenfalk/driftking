@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { audio } from './engine/audio';
 import { music } from './engine/music';
-import { driftMedal, lapMedal, medalFor, nextCareerTrack } from './game/career';
+import { careerPace, driftMedal, lapMedal, medalFor, nextCareerTrack } from './game/career';
 import { loadCustom, newDraft, writeCustom } from './game/custom';
 import { medalPay, payout, scalePayout } from './game/economy';
 import type { Mode } from './game/economy';
@@ -156,7 +156,7 @@ export default function App() {
         mode={mode}
         car={{ look: selectedModel(save).look, stats: selectedStats(save) }}
         conditions={conditionsFor(track, settings)}
-        paceScale={DIFFICULTY[settings.difficulty].pace}
+        paceScale={DIFFICULTY[settings.difficulty].pace * careerPace(track.id)}
         attack={
           mode === 'attack'
             ? {

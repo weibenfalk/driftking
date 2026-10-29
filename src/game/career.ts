@@ -16,6 +16,17 @@ export const CUPS: Cup[] = [
   { id: 'city', name: 'CITY CUP', trackIds: ['downtown', 'harbor', 'neon-alley', 'skyline'] },
 ];
 
+/**
+ * How hard the rivals drive on a career track: the AI pace multiplier climbs steadily from the first track of the
+ * first cup (0.92) to the last track of the last cup (1.11), so each track is a little tougher than the one before.
+ * Tracks outside the career (free-race extras, custom, daily) get 1.
+ */
+export function careerPace(trackId: string): number {
+  const all = CUPS.flatMap((c) => c.trackIds);
+  const i = all.indexOf(trackId);
+  return i < 0 ? 1 : 0.92 + (i / (all.length - 1)) * 0.19;
+}
+
 export const MEDAL_NAMES = ['NO MEDAL', 'BRONZE', 'SILVER', 'GOLD'];
 
 /** Points (bronze 1, silver 2, gold 3) needed in a cup to open the next one. Max per cup is 12. */
