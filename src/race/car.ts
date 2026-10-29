@@ -1,3 +1,4 @@
+import { snap } from '../engine/pal';
 import { TAU, clamp, rnd, wrapAngle } from '../engine/util';
 import { GRASS, HAZ_NONE, HAZ_PUDDLE, SOLID, WATER, globalIdx, hazardAt, surfAt } from './track';
 import type { Ground, Tree, World } from './track';
@@ -97,35 +98,132 @@ export interface Look {
   shadows: HTMLCanvasElement[];
 }
 
-const CAR = ['..tt.....tt...', '.dwwwwwwwwwwd.', 'rwwgdddddggwwl', 'rwwgdsdsdggwww', 'rwwgdsdsdggwww', 'rwwgdddddggwwl', '.dwwwwwwwwwwd.', '..tt.....tt...'];
+/** Size of a car sprite frame in pixels; draw it centred on the car. */
+export const SPRITE = 22;
 
-function makeFrames(body: string, darkc: string, stripe: string) {
-  const pal: Record<string, string> = { t: '#101014', d: darkc, w: body, g: '#9fd8ff', s: stripe, r: '#ff4a3a', l: '#fff6b0' };
+const TW = 32; // the car is drawn once at twice the size, then rotated down with supersampling
+const TH = 18;
+
+interface Shape {
+  /** 0 none, 1 small, 2 big rear wing. */
+  wing: number;
+  /** Extra length of the nose. */
+  nose: number;
+  /** Extra width. */
+  wide: number;
+}
+
+/** Top-down car, facing right, as a grid of materials: b body, d side panel, s stripe, g glass, k tyre, r tail light, l headlight, w wing. */
+function carTemplate({ wing, nose, wide }: Shape): string[][] {
+  const T = Array.from({ length: TH }, () => Array<string>(TW).fill('.'));
+  const set = (x0: number, x1: number, y0: number, y1: number, m: string) => {
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (x >= 0 && x < TW && y >= 0 && y < TH) T[y][x] = m;
+  };
+  const xFront = 28 + nose;
+  for (let x = 3; x <= xFront; x++) {
+    let hh = 6.4 + wide * 0.6;
+    if (x > 19) hh -= 3.6 * Math.pow((x - 19) / (xFront - 19 + 1), 1.5);
+    if (x < 6) hh -= (6 - x) * 0.3;
+    for (let y = 0; y < TH; y++) {
+      const d = Math.abs(y + 0.5 - TH / 2);
+      if (d <= hh) T[y][x] = d > hh - 1.2 ? 'd' : 'b';
+    }
+  }
+  const wy = [0, 2, TH - 3, TH - 1];
+  set(22 + nose, 25 + nose, wy[0], wy[1], 'k'); // front tyres
+  set(22 + nose, 25 + nose, wy[2], wy[3], 'k');
+  set(5, 8, wy[0], wy[1], 'k'); // rear tyres
+  set(5, 8, wy[2], wy[3], 'k');
+  set(13, 19, 5, 12, 'g'); // cockpit glass
+  set(21, xFront - 2, 8, 9, 's'); // stripe along the bonnet
+  set(xFront - 2, xFront, 4, 6, 'l');
+  set(xFront - 2, xFront, 11, 13, 'l');
+  set(3, 5, 4, 6, 'r');
+  set(3, 5, 11, 13, 'r');
+  if (wing === 1) set(1, 3, 3, 14, 'w');
+  if (wing === 2) set(0, 4, 2, 15, 'w');
+  return T;
+}
+
+const OUTLINE: [number, number, number] = [17, 17, 34];
+
+function hex(c: string): [number, number, number] {
+  return [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)];
+}
+
+const lit = (c: [number, number, number], k: number): [number, number, number] => [Math.min(255, c[0] * k), Math.min(255, c[1] * k), Math.min(255, c[2] * k)];
+
+/**
+ * One car in 64 headings. Each frame is the template rotated with 2x2 supersampling (so edges stay clean), lit from the
+ * top left whatever way the car points, with a dark outline: the look of hand-drawn Amiga sprites.
+ */
+function makeFrames(body: string, darkc: string, stripe: string, shape: Shape) {
+  const T = carTemplate(shape);
+  const pal: Record<string, [number, number, number]> = {
+    b: hex(body),
+    d: hex(darkc),
+    s: hex(stripe),
+    g: [51, 85, 136],
+    k: [34, 34, 51],
+    r: [255, 68, 51],
+    l: [255, 246, 170],
+    w: lit(hex(darkc), 0.8),
+  };
   const frames: HTMLCanvasElement[] = [];
   const shadows: HTMLCanvasElement[] = [];
+  const C = SPRITE / 2;
   for (let k = 0; k < ROT; k++) {
     const th = (k / ROT) * TAU;
     const co = Math.cos(th);
     const si = Math.sin(th);
+    const mat: string[][] = Array.from({ length: SPRITE }, () => Array<string>(SPRITE).fill('.'));
+    for (let oy = 0; oy < SPRITE; oy++)
+      for (let ox = 0; ox < SPRITE; ox++) {
+        const votes: Record<string, number> = {};
+        let n = 0;
+        for (const [jx, jy] of [[-0.25, -0.25], [0.25, -0.25], [-0.25, 0.25], [0.25, 0.25]]) {
+          const x = ox + 0.5 + jx - C;
+          const y = oy + 0.5 + jy - C;
+          const sx = Math.floor((x * co + y * si) * 2 + TW / 2);
+          const sy = Math.floor((-x * si + y * co) * 2 + TH / 2);
+          const m = sx >= 0 && sy >= 0 && sx < TW && sy < TH ? T[sy][sx] : '.';
+          if (m !== '.') {
+            votes[m] = (votes[m] ?? 0) + 1;
+            n++;
+          }
+        }
+        if (n < 3) continue; // crisp silhouette: at least three of the four samples must hit the car
+        mat[oy][ox] = Object.entries(votes).sort((a, b) => b[1] - a[1])[0][0];
+      }
+    const solid = (x: number, y: number) => x >= 0 && y >= 0 && x < SPRITE && y < SPRITE && mat[y][x] !== '.';
     const f = document.createElement('canvas');
-    f.width = f.height = 18;
+    f.width = f.height = SPRITE;
     const fc = f.getContext('2d')!;
     const sh = document.createElement('canvas');
-    sh.width = sh.height = 18;
+    sh.width = sh.height = SPRITE;
     const sc = sh.getContext('2d')!;
     sc.fillStyle = '#000';
-    for (let oy = 0; oy < 18; oy++)
-      for (let ox = 0; ox < 18; ox++) {
-        const x = ox + 0.5 - 9;
-        const y = oy + 0.5 - 9;
-        const sx = x * co + y * si + 7;
-        const sy = -x * si + y * co + 4;
-        if (sx < 0 || sy < 0 || sx >= 14 || sy >= 8) continue;
-        const ch = CAR[sy | 0][sx | 0];
-        if (ch === '.') continue;
-        fc.fillStyle = pal[ch];
-        fc.fillRect(ox, oy, 1, 1);
-        sc.fillRect(ox, oy, 1, 1);
+    for (let y = 0; y < SPRITE; y++)
+      for (let x = 0; x < SPRITE; x++) {
+        const m = mat[y][x];
+        let c: [number, number, number];
+        if (m === '.') {
+          let near = false;
+          for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (solid(x + dx, y + dy)) near = true;
+          if (!near) continue;
+          c = OUTLINE;
+        } else {
+          c = pal[m];
+          if (m === 'b' || m === 'd' || m === 's') {
+            const edgeLit = !solid(x - 1, y) || !solid(x, y - 1) || !solid(x - 1, y - 1);
+            const edgeDark = !solid(x + 1, y) || !solid(x, y + 1) || !solid(x + 1, y + 1);
+            if (edgeLit && !edgeDark) c = lit(c, 1.3);
+            else if (edgeDark && !edgeLit) c = lit(c, 0.7);
+          }
+          sc.fillRect(x, y, 1, 1);
+        }
+        fc.fillStyle = `rgb(${snap(c[0])},${snap(c[1])},${snap(c[2])})`;
+        fc.fillRect(x, y, 1, 1);
       }
     frames.push(f);
     shadows.push(sh);
@@ -155,9 +253,18 @@ export const GHOST_LOOK = 6;
 
 let LOOKS: Look[] | null = null;
 
-/** Sprite sets, built once. */
+const SHAPES: Shape[] = [
+  { wing: 1, nose: 0, wide: 0 }, // rookie
+  { wing: 1, nose: 0, wide: -1 }, // sprinter
+  { wing: 0, nose: 0, wide: 1 }, // gripper
+  { wing: 2, nose: 0, wide: 0 }, // drifter
+  { wing: 1, nose: 2, wide: -1 }, // rocket
+  { wing: 2, nose: 1, wide: 1 }, // king
+];
+
+/** Sprite sets, built once. AI cars share the stock shape. */
 export function getLooks(): Look[] {
-  return (LOOKS ??= LOOK_COLORS.map(([body, dark, stripe]) => ({ col: body, ...makeFrames(body, dark, stripe) })));
+  return (LOOKS ??= LOOK_COLORS.map(([body, dark, stripe], i) => ({ col: body, ...makeFrames(body, dark, stripe, SHAPES[i] ?? SHAPES[0]) })));
 }
 
 /* ------------------------------------------------------------------ */

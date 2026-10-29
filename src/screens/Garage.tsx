@@ -1,21 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { CAR_MODELS, MAX_LEVEL, UPGRADES, UPGRADE_KINDS, statsFor } from '../game/cars';
 import { buyCar, levelsOf, owns, selectCar, selectedModel, upgradeCar, upgradePrice } from '../game/garage';
 import type { Save } from '../game/save';
 import { getLooks } from '../race/car';
-import { Header } from './ui';
-
-/** The car sprite at 5x, facing right. */
-function CarPreview({ look }: { look: number }) {
-  const ref = useRef<HTMLCanvasElement>(null);
-  useEffect(() => {
-    const ctx = ref.current?.getContext('2d');
-    if (!ctx) return;
-    ctx.clearRect(0, 0, 18, 18);
-    ctx.drawImage(getLooks()[look].frames[0], 0, 0);
-  }, [look]);
-  return <canvas ref={ref} className="car-preview" width={18} height={18} />;
-}
+import Retro from '../ui/Retro';
+import type { RetroScreen } from '../ui/Retro';
+import { nav } from '../ui/nav';
+import { C, H, W, bevel, button, copperBackground, header, text } from '../ui/kit';
 
 const BARS = [
   ['GRIP', 'grip', 0.8, 1.3],
@@ -25,73 +16,110 @@ const BARS = [
   ['BRAKES', 'brake', 0.9, 1.5],
 ] as const;
 
+const CARD_W = 50;
+const CARD_H = 44;
+const CARD_Y = 30;
+
 interface Props {
   save: Save;
   onChange: (next: Save) => void;
   onBack: () => void;
 }
 
+/** Pick a car with left/right, then up/down through the actions below it (use or buy, then the three upgrades). */
 export default function Garage({ save, onChange, onBack }: Props) {
-  const [focus, setFocus] = useState(selectedModel(save).id);
-  const model = CAR_MODELS.find((m) => m.id === focus) ?? CAR_MODELS[0];
+  const [car, setCar] = useState(() => Math.max(0, CAR_MODELS.findIndex((m) => m.id === selectedModel(save).id)));
+  const [row, setRow] = useState(0);
+  const model = CAR_MODELS[car];
   const owned = owns(save, model.id);
   const lv = levelsOf(save, model.id);
   const stats = statsFor(model, lv);
-  const isSelected = save.garage.selected === model.id;
+  const inUse = save.garage.selected === model.id;
 
-  return (
-    <main className="screen">
-      <Header title="GARAGE" onBack={onBack} />
-      <p className="money">$ {save.money}</p>
-      <div className="garage">
-        <div className="cars">
-          {CAR_MODELS.map((m) => (
-            <button key={m.id} className={m.id === focus ? 'car-card on' : 'car-card'} onClick={() => setFocus(m.id)}>
-              <CarPreview look={m.look} />
-              <span>{m.name}</span>
-              <small>{owns(save, m.id) ? (save.garage.selected === m.id ? 'IN USE' : 'OWNED') : `$ ${m.price}`}</small>
-            </button>
-          ))}
-        </div>
-        <section className="detail">
-          <h2>{model.name}</h2>
-          <p className="hint">{model.blurb}</p>
-          {BARS.map(([label, key, lo, hi]) => (
-            <div key={key} className="bar">
-              <span>{label}</span>
-              <i>
-                <b style={{ width: `${Math.min(100, Math.max(4, ((stats[key] - lo) / (hi - lo)) * 100))}%` }} />
-              </i>
-            </div>
-          ))}
-          {owned ? (
-            <>
-              <button disabled={isSelected} onClick={() => onChange(selectCar(save, model.id)!)}>
-                {isSelected ? 'IN USE' : 'USE THIS CAR'}
-              </button>
-              <h3>UPGRADES</h3>
-              {UPGRADE_KINDS.map((k) => {
-                const price = upgradePrice(save, model.id, k);
-                return (
-                  <div key={k} className="upg">
-                    <span>
-                      {UPGRADES[k].label} <small>{UPGRADES[k].effect}</small>
-                    </span>
-                    <span className="pips">{Array.from({ length: MAX_LEVEL }, (_, i) => (i < lv[k] ? '■' : '□')).join('')}</span>
-                    <button disabled={price === null || save.money < price} onClick={() => onChange(upgradeCar(save, model.id, k)!)}>
-                      {price === null ? 'MAX' : `$ ${price}`}
-                    </button>
-                  </div>
-                );
-              })}
-            </>
-          ) : (
-            <button disabled={save.money < model.price} onClick={() => onChange(buyCar(save, model.id)!)}>
-              BUY $ {model.price}
-            </button>
-          )}
-        </section>
-      </div>
-    </main>
-  );
+  /** Rows: 0 is use/buy, 1-3 the upgrades. */
+  const act = (r: number) => {
+    const next = r === 0 ? (owned ? selectCar(save, model.id) : buyCar(save, model.id)) : owned ? upgradeCar(save, model.id, UPGRADE_KINDS[r - 1]) : null;
+    if (next) onChange(next);
+  };
+  const rowsCount = owned ? 4 : 1;
+
+  const screen: RetroScreen = {
+    draw(ctx, t) {
+      copperBackground(ctx);
+      header(ctx, 'GARAGE');
+      text(ctx, `$${save.money}`, W - 6, 30, C.green, { align: 'right' });
+      const looks = getLooks();
+      CAR_MODELS.forEach((m, i) => {
+        const x = 6 + i * (CARD_W + 2);
+        bevel(ctx, x, CARD_Y + 8, CARD_W, CARD_H, i === car ? C.navy3 : C.navy2, i === car);
+        ctx.drawImage(looks[m.look].frames[i === car ? Math.floor(t * 8) % 64 : 0], x + CARD_W / 2 - 11, CARD_Y + 11);
+        text(ctx, m.name, x + CARD_W / 2, CARD_Y + 38, i === car ? C.gold : C.ink, { align: 'center' });
+        text(ctx, owns(save, m.id) ? (save.garage.selected === m.id ? 'IN USE' : 'OWNED') : `$${m.price}`, x + CARD_W / 2, CARD_Y + 46, owns(save, m.id) ? C.green : C.dim, { align: 'center' });
+      });
+      // detail
+      bevel(ctx, 6, 86, W - 12, 102, C.navy1, true);
+      ctx.save();
+      ctx.translate(14, 92);
+      ctx.scale(3, 3);
+      ctx.drawImage(looks[model.look].frames[0], 0, 0);
+      ctx.restore();
+      text(ctx, model.name, 10, 160, C.gold, { scale: 2 });
+      text(ctx, model.blurb, 10, 174, C.dim);
+      BARS.forEach(([label, key, lo, hi], i) => {
+        const y = 90 + i * 9;
+        text(ctx, label, 90, y, C.ink);
+        bevel(ctx, 140, y - 1, 100, 7, C.navy0, true);
+        const w = Math.round(Math.min(1, Math.max(0.04, (stats[key] - lo) / (hi - lo))) * 96);
+        ctx.fillStyle = i % 2 ? '#2b5' : '#4d6';
+        ctx.fillRect(142, y + 1, w, 3);
+      });
+      // actions
+      const mainLabel = owned ? (inUse ? 'IN USE' : 'USE THIS CAR') : `BUY  $${model.price}`;
+      button(ctx, mainLabel, 90, 136, 100, 11, row === 0, owned ? inUse : save.money < model.price);
+      if (owned) {
+        UPGRADE_KINDS.forEach((k, i) => {
+          const y = 150 + i * 11;
+          const price = upgradePrice(save, model.id, k);
+          const on = row === i + 1;
+          const can = price !== null && save.money >= price;
+          if (on) {
+            ctx.fillStyle = can ? C.orange : C.navy3;
+            ctx.fillRect(88, y - 2, 222, 10);
+          }
+          const ink = on ? C.black : C.ink;
+          text(ctx, UPGRADES[k].label, 92, y, ink, { shadow: on ? null : '#000' });
+          text(ctx, UPGRADES[k].effect, 134, y, on ? C.black : C.dim, { shadow: on ? null : '#000' });
+          text(ctx, Array.from({ length: MAX_LEVEL }, (_, j) => (j < lv[k] ? '#' : '-')).join(' '), 236, y, on ? C.black : C.gold, { shadow: on ? null : '#000' });
+          text(ctx, price === null ? 'MAX' : `$${price}`, 306, y, on ? C.black : can ? C.green : C.red, { align: 'right', shadow: on ? null : '#000' });
+        });
+      }
+      text(ctx, 'LEFT RIGHT CAR   UP DOWN CHOOSE   ENTER BUY OR USE', W / 2, H - 8, C.ink, { align: 'center' });
+    },
+    key(e) {
+      const n = nav(e);
+      if (n === 'left') {
+        setCar((car + CAR_MODELS.length - 1) % CAR_MODELS.length);
+        setRow(0);
+      } else if (n === 'right') {
+        setCar((car + 1) % CAR_MODELS.length);
+        setRow(0);
+      } else if (n === 'up') setRow((row + rowsCount - 1) % rowsCount);
+      else if (n === 'down') setRow((row + 1) % rowsCount);
+      else if (n === 'ok') act(row);
+      else if (n === 'back') onBack();
+    },
+    click(x, y) {
+      const i = Math.floor((x - 6) / (CARD_W + 2));
+      if (y >= CARD_Y + 8 && y <= CARD_Y + 8 + CARD_H && i >= 0 && i < CAR_MODELS.length) {
+        setCar(i);
+        setRow(0);
+      } else if (y >= 136 && y <= 147 && x >= 90 && x <= 190) act(0);
+      else if (owned && y >= 148 && y < 184 && x >= 88) {
+        const r = 1 + Math.floor((y - 148) / 11);
+        setRow(r);
+        act(r);
+      }
+    },
+  };
+  return <Retro screen={screen} />;
 }

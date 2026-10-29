@@ -1,8 +1,9 @@
 import { drawText } from '../engine/pixelfont';
 import { TAU, formatTime } from '../engine/util';
-import { GHOST_LOOK, ROT, getLooks } from './car';
+import { GHOST_LOOK, ROT, SPRITE, getLooks } from './car';
 import type { Car } from './car';
 import type { GhostPose } from './ghost';
+import { WATER } from './surfaces';
 import type { World } from './track';
 
 export const SW = 320;
@@ -83,12 +84,57 @@ export function createRenderer(ctx: CanvasRenderingContext2D, world: World) {
     wctx.fillRect(x | 0, y | 0, 1, 1);
   }
 
+  /** Amiga-style bevelled box: light edge top and left, dark edge bottom and right. */
   const panel = (x: number, y: number, w: number, h: number) => {
-    ctx.fillStyle = 'rgba(8,8,20,.55)';
+    ctx.fillStyle = 'rgba(17,17,51,.82)';
     ctx.fillRect(x, y, w, h);
-    ctx.fillStyle = 'rgba(255,255,255,.18)';
+    ctx.fillStyle = '#aab';
     ctx.fillRect(x, y, w, 1);
+    ctx.fillRect(x, y, 1, h);
+    ctx.fillStyle = '#113';
+    ctx.fillRect(x, y + h - 1, w, 1);
+    ctx.fillRect(x + w - 1, y, 1, h);
   };
+
+  /** Lake sparkle: a few glints that drift across the water in steps, like Amiga palette cycling. */
+  function drawWater(ox: number, oy: number) {
+    const wb = world.water;
+    if (!wb || ox > wb.x1 || ox + SW < wb.x0 || oy > wb.y1 || oy + SH < wb.y0) return;
+    const phase = Math.floor(performance.now() / 260);
+    const g = world.track.theme.water.glint;
+    ctx.fillStyle = `rgb(${g[0]},${g[1]},${g[2]})`;
+    for (let y = Math.max(wb.y0, oy); y < Math.min(wb.y1, oy + SH); y++)
+      for (let x = Math.max(wb.x0, ox); x < Math.min(wb.x1, ox + SW); x++) {
+        if (world.surf[y * world.w + x] !== WATER) continue;
+        const wave = Math.sin(x * 0.33 + y * 0.21 + phase * 1.1) + Math.sin(y * 0.47 - x * 0.12 - phase * 0.8);
+        if (wave > 1.7) ctx.fillRect(x - ox, y - oy, 2, 1);
+      }
+  }
+
+  /** The start gantry's bar, held above the road so cars drive under it. */
+  function drawGantry(ox: number, oy: number) {
+    const s0 = world.S[0];
+    const edge = world.track.halfWidth + 9;
+    const lift = 11;
+    if (Math.hypot(s0.x - ox - SW / 2, s0.y - oy - SH / 2) > SW) return;
+    for (const side of [-1, 1]) {
+      const px = Math.round(s0.x + s0.nx * side * edge - ox);
+      const py = Math.round(s0.y + s0.ny * side * edge - oy);
+      ctx.fillStyle = '#334';
+      ctx.fillRect(px - 1, py - lift, 3, lift);
+      ctx.fillStyle = '#99a';
+      ctx.fillRect(px - 1, py - lift, 1, lift);
+    }
+    for (let u = -edge; u <= edge; u++) {
+      const x = Math.round(s0.x + s0.nx * u - ox);
+      const y = Math.round(s0.y + s0.ny * u - oy) - lift;
+      const dark = (Math.floor((u + edge) / 4) & 1) === 0;
+      ctx.fillStyle = dark ? '#111' : '#fff';
+      ctx.fillRect(x, y - 1, 1, 4);
+      ctx.fillStyle = dark ? '#fff' : '#111';
+      ctx.fillRect(x, y + 1, 1, 1);
+    }
+  }
 
   function drawHud(v: View) {
     const h = v.hud;
@@ -141,6 +187,7 @@ export function createRenderer(ctx: CanvasRenderingContext2D, world: World) {
     const ox = Math.round(v.camX - SW / 2);
     const oy = Math.round(v.camY - SH / 2);
     ctx.drawImage(canvas, ox, oy, SW, SH, 0, 0, SW, SH);
+    drawWater(ox, oy);
     for (const q of parts) {
       const a = q.life / q.max;
       const x = Math.round(q.x - ox);
@@ -169,19 +216,20 @@ export function createRenderer(ctx: CanvasRenderingContext2D, world: World) {
       const g = v.ghost;
       const fr = ((Math.round((g.a / TAU) * ROT) % ROT) + ROT) % ROT;
       ctx.globalAlpha = 0.5;
-      ctx.drawImage(looks[GHOST_LOOK].frames[fr], Math.round(g.x - ox) - 9, Math.round(g.y - oy) - 9);
+      ctx.drawImage(looks[GHOST_LOOK].frames[fr], Math.round(g.x - ox) - SPRITE / 2, Math.round(g.y - oy) - SPRITE / 2);
       ctx.globalAlpha = 1;
     }
     for (const c of cars) {
       const fr = ((Math.round((c.a / TAU) * ROT) % ROT) + ROT) % ROT;
       const L = looks[c.look];
-      const x = Math.round(c.x - ox) - 9;
-      const y = Math.round(c.y - oy) - 9;
+      const x = Math.round(c.x - ox) - SPRITE / 2;
+      const y = Math.round(c.y - oy) - SPRITE / 2;
       ctx.globalAlpha = 0.35;
       ctx.drawImage(L.shadows[fr], x + 2, y + 2);
       ctx.globalAlpha = 1;
       ctx.drawImage(L.frames[fr], x, y);
     }
+    drawGantry(ox, oy);
     {
       // arrow over the player's car
       const x = Math.round(player.x - ox);

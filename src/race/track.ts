@@ -1,29 +1,46 @@
-import { TAU, clamp, mulberry32, rnd, wrapAngle } from '../engine/util';
+import type { RGB } from '../engine/pal';
+import { clamp, wrapAngle } from '../engine/util';
+import { paintWorld } from './paint';
+import type { BoostPad, Tree } from './paint';
+import { GRASS, HAZ_NONE } from './surfaces';
 
-type RGB = [number, number, number];
+export * from './surfaces';
+export type { BoostPad, Tree } from './paint';
 
 /** Off-road surface. Each one is a different mix of top speed, drag and grip (see `GROUNDS` in car.ts). */
 export type Ground = 'grass' | 'sand' | 'snow' | 'mud';
 
-/** Colours that make a track look like somewhere. */
+/** Kinds of scenery that can be scattered beside the road. */
+export type PropStyle = 'tree' | 'pine' | 'bush' | 'cactus' | 'rock' | 'building';
+
+/** Four-tone shading ramp (dark to light) and an outline colour for a kind of prop. */
+export interface PropPalette {
+  ramp: [RGB, RGB, RGB, RGB];
+  rim: RGB;
+}
+
+/** The look of the ground texture. */
+export type Detail = 'meadow' | 'sand' | 'forest' | 'snow' | 'city';
+
+/** Colours that make a track look like somewhere. Everything is snapped to the Amiga's 12-bit palette when painted. */
 export interface Theme {
-  grass: { a: RGB; b: RGB; dark: RGB; light: RGB };
-  road: { base: RGB; dark: RGB; light: RGB };
+  /** Ground tones dark to light; large-scale noise picks between them with dithering. */
+  ground: [RGB, RGB, RGB, RGB];
+  detail: Detail;
+  /** The strip of bare ground beside the curb: shadow-side tone and the lighter tone. */
+  verge: [RGB, RGB];
+  road: { base: RGB; dark: RGB; light: RGB; line: RGB; center: RGB; marks: boolean };
   curb: [RGB, RGB];
-  /** Shading for round props (trees, cacti, rocks). */
-  prop: { shadow: RGB; rim: RGB; light: RGB; dark: RGB; mid: RGB };
-  water: { deep: RGB; glint: RGB; shore: RGB };
-  /** Roof colours for `building` props. */
+  props: Partial<Record<PropStyle, PropPalette>>;
+  water: { deep: RGB; mid: RGB; glint: RGB; shore: RGB };
+  /** Roof colours for buildings. */
   roofs: RGB[];
 }
 
 export interface Props {
-  /** `round` props are bounced off as circles; `building` props are solid rectangles. */
-  kind: 'round' | 'building';
   count: number;
-  /** Radius range for round props, half-size range for buildings. */
-  min: number;
-  max: number;
+  /** What to scatter and how often (relative weights). */
+  mix: [PropStyle, number][];
 }
 
 /** Everything that makes one track different from another. `buildWorld(track)` does the rest. */
@@ -57,30 +74,6 @@ export interface Sample {
   nx: number;
   ny: number;
 }
-export interface Tree {
-  x: number;
-  y: number;
-  r: number;
-}
-
-export const GRASS = 0;
-export const ASPHALT = 1;
-export const CURB = 2;
-export const SOLID = 3;
-export const WATER = 4;
-
-export const HAZ_NONE = 0;
-export const HAZ_PUDDLE = 1;
-export const HAZ_OIL = 2;
-
-/** A boost strip on the road: centre and driving direction. */
-export interface BoostPad {
-  x: number;
-  y: number;
-  tx: number;
-  ty: number;
-}
-
 export interface World {
   track: Track;
   w: number;
@@ -93,6 +86,8 @@ export interface World {
   surf: Uint8Array; // GRASS, ASPHALT, CURB, SOLID or WATER
   trees: Tree[];
   boosts: BoostPad[];
+  /** Bounding box of the lake, so the renderer only animates water where there is some. */
+  water: { x0: number; y0: number; x1: number; y1: number } | null;
   hazard: Uint8Array; // HAZ_* per pixel: puddles and oil on the road
   mini: HTMLCanvasElement;
 }
@@ -208,7 +203,7 @@ export function sampleCenterline(cp: [number, number][]) {
 }
 
 /** Heading change over the next 18 samples at each point. */
-function turnAhead(S: Sample[]) {
+export function turnAhead(S: Sample[]) {
   const N = S.length;
   const turn = new Float32Array(N);
   for (let i = 0; i < N; i++) {
@@ -270,323 +265,10 @@ function roadWidths(S: Sample[], half: number, extra: number) {
   return hw;
 }
 
-/* ------------------------------------------------------------------ */
-/* Painting                                                            */
-/* ------------------------------------------------------------------ */
-
-type Put = (x: number, y: number, c: number[], s?: number) => void;
-
-/** Road, curbs and ground texture. Returns the pixels, the surface map and a pixel setter that writes to both. */
-function paintTerrain(track: Track, S: Sample[], hw: Float32Array) {
-  const { width: WW, height: WH, theme } = track;
-  const N = S.length;
-  const cv = document.createElement('canvas');
-  cv.width = WW;
-  cv.height = WH;
-  const w = cv.getContext('2d', { willReadFrequently: true })!;
-  const surf = new Uint8Array(WW * WH);
-  w.fillStyle = 'rgb(60,138,58)';
-  w.fillRect(0, 0, WW, WH);
-  for (let i = 0; i < N; i++) {
-    w.fillStyle = Math.floor(i / 3) % 2 ? 'rgb(236,236,236)' : 'rgb(216,50,42)';
-    w.beginPath();
-    w.arc(S[i].x, S[i].y, hw[i] + 5, 0, TAU);
-    w.fill();
-  }
-  w.fillStyle = 'rgb(85,87,101)';
-  for (let i = 0; i < N; i++) {
-    w.beginPath();
-    w.arc(S[i].x, S[i].y, hw[i], 0, TAU);
-    w.fill();
-  }
-  const img = w.getImageData(0, 0, WW, WH);
-  const d = img.data;
-  // the arcs above are anti-aliased: snap every pixel to the nearest of the four flat colours
-  const refs = [
-    [60, 138, 58, GRASS],
-    [216, 50, 42, CURB],
-    [236, 236, 236, SOLID],
-    [85, 87, 101, ASPHALT],
-  ];
-  for (let p = 0, i = 0; p < WW * WH; p++, i += 4) {
-    let best = 0;
-    let bd = 1e9;
-    for (let k = 0; k < 4; k++) {
-      const r = refs[k];
-      const e = (d[i] - r[0]) ** 2 + (d[i + 1] - r[1]) ** 2 + (d[i + 2] - r[2]) ** 2;
-      if (e < bd) {
-        bd = e;
-        best = k;
-      }
-    }
-    const x = p % WW;
-    const y = (p / WW) | 0;
-    const cls = refs[best][3];
-    let c: number[];
-    if (cls === GRASS) {
-      const band = Math.floor((x + y * 0.4) / 22) % 2;
-      c = band ? theme.grass.b : theme.grass.a;
-      const r = Math.random();
-      if (r < 0.06) c = theme.grass.dark;
-      else if (r < 0.09) c = theme.grass.light;
-      surf[p] = GRASS;
-    } else if (cls === ASPHALT) {
-      c = theme.road.base;
-      const r = Math.random();
-      if (r < 0.09) c = theme.road.dark;
-      else if (r < 0.12) c = theme.road.light;
-      surf[p] = ASPHALT;
-    } else if (cls === CURB) {
-      c = theme.curb[0];
-      surf[p] = CURB;
-    } else {
-      c = theme.curb[1];
-      surf[p] = CURB; // the second curb stripe drives like the first
-    }
-    d[i] = c[0];
-    d[i + 1] = c[1];
-    d[i + 2] = c[2];
-    d[i + 3] = 255;
-  }
-  const put: Put = (x, y, c, s) => {
-    x |= 0;
-    y |= 0;
-    if (x < 0 || y < 0 || x >= WW || y >= WH) return;
-    const i = (y * WW + x) * 4;
-    d[i] = c[0];
-    d[i + 1] = c[1];
-    d[i + 2] = c[2];
-    if (s !== undefined) surf[y * WW + x] = s;
-  };
-  return { img, surf, put };
-}
-
-/** Chequered start line and the four grid slots behind it. */
-function paintStart(put: Put, s0: Sample, half: number) {
-  for (let u = -half; u <= half; u += 0.5)
-    for (let v = -4; v < 4; v += 0.5) {
-      const col = (Math.floor((u + half) / 3) + Math.floor((v + 4) / 3)) % 2 ? [245, 245, 245] : [20, 20, 24];
-      put(s0.x + s0.nx * u + s0.tx * v, s0.y + s0.ny * u + s0.ty * v, col, ASPHALT);
-    }
-  for (let g = 0; g < 8; g++) {
-    const back = 22 + (g >> 1) * 18 + (g & 1) * 9;
-    const lat = g & 1 ? 12 : -12;
-    const cx = s0.x - s0.tx * back + s0.nx * lat;
-    const cy = s0.y - s0.ty * back + s0.ny * lat;
-    for (let u = -6; u <= 6; u += 0.5) put(cx + s0.nx * u - s0.tx * 7, cy + s0.ny * u - s0.ty * 7, [230, 230, 230]);
-    for (let v = -7; v <= -3; v += 0.5) {
-      put(cx + s0.nx * -6 + s0.tx * v, cy + s0.ny * -6 + s0.ty * v, [230, 230, 230]);
-      put(cx + s0.nx * 6 + s0.tx * v, cy + s0.ny * 6 + s0.ty * v, [230, 230, 230]);
-    }
-  }
-}
-
-/** Solid stand on the left of the start line (looking along the track), drawn in the track's own orientation. */
-function paintGrandstand(put: Put, s0: Sample, half: number) {
-  const off = half + 24;
-  const crowd = [
-    [228, 53, 43],
-    [255, 210, 63],
-    [60, 110, 220],
-    [242, 240, 234],
-  ];
-  const at = (x: number, y: number, c: number[]) => put(s0.x + s0.nx * (x - off) + s0.tx * y, s0.y + s0.ny * (x - off) + s0.ty * y, c, SOLID);
-  for (let y = -56; y < 56; y += 0.5)
-    for (let x = -10; x < 10; x += 0.5) {
-      let c = x < -6 ? [120, 124, 140] : (Math.floor(y) + 56) % 4 < 2 ? [176, 180, 196] : [150, 154, 170];
-      if (x >= -6 && Math.random() < 0.35) c = crowd[Math.floor(Math.random() * 4)];
-      at(x, y, c);
-    }
-  for (let y = -56; y < 56; y += 0.5) {
-    at(10, y, [30, 30, 36]);
-    at(10.5, y, [30, 30, 36]);
-  }
-}
-
-function plantProps(put: Put, surf: Uint8Array, track: Track) {
-  const { width: WW, height: WH, theme, props } = track;
-  const trees: Tree[] = [];
-  const isClear = (x: number, y: number, r: number) => {
-    for (let dy = -r; dy <= r; dy += 3)
-      for (let dx = -r; dx <= r; dx += 3) {
-        const X = (x + dx) | 0;
-        const Y = (y + dy) | 0;
-        if (X < 4 || Y < 4 || X >= WW - 4 || Y >= WH - 4) return false;
-        if (surf[Y * WW + X] !== GRASS) return false;
-      }
-    return true;
-  };
-  if (props.kind === 'building') {
-    const placed: { x: number; y: number; r: number }[] = [];
-    let tries = 0;
-    while (placed.length < props.count && tries++ < 4000) {
-      const hw = Math.round(rnd(props.min, props.max));
-      const hh = Math.round(rnd(props.min, props.max));
-      const x = Math.round(rnd(20, WW - 20));
-      const y = Math.round(rnd(20, WH - 20));
-      const r = Math.max(hw, hh);
-      if (!isClear(x, y, r + 14)) continue;
-      if (placed.some((p) => Math.hypot(p.x - x, p.y - y) < p.r + r + 10)) continue;
-      placed.push({ x, y, r });
-      const roof = theme.roofs[Math.floor(Math.random() * theme.roofs.length)];
-      const shade = (k: number) => roof.map((v) => clamp(v * k, 0, 255)) as RGB;
-      for (let dy = -hh; dy <= hh; dy++)
-        for (let dx = -hw; dx <= hw; dx++) put(x + dx + 3, y + dy + 3, theme.prop.shadow);
-      for (let dy = -hh; dy <= hh; dy++)
-        for (let dx = -hw; dx <= hw; dx++) {
-          let c = roof;
-          if (dy === -hh || dx === -hw) c = shade(1.25);
-          else if (dy === hh || dx === hw) c = shade(0.7);
-          else if (dx % 6 === 0 && dy % 6 === 0 && Math.abs(dx) < hw - 3 && Math.abs(dy) < hh - 3) c = shade(0.8); // skylights
-          put(x + dx, y + dy, c, SOLID);
-        }
-    }
-    return trees;
-  }
-  let tries = 0;
-  while (trees.length < props.count && tries++ < 4000) {
-    const x = rnd(10, WW - 10);
-    const y = rnd(10, WH - 10);
-    const r = rnd(props.min, props.max) | 0;
-    if (!isClear(x, y, r + 16)) continue;
-    if (trees.some((t) => Math.hypot(t.x - x, t.y - y) < t.r + r + 6)) continue;
-    trees.push({ x, y, r });
-  }
-  const tc = theme.prop;
-  for (const t of trees) {
-    for (let dy = -t.r; dy <= t.r; dy++) for (let dx = -t.r; dx <= t.r; dx++) if (Math.hypot(dx, dy) <= t.r) put(t.x + dx + 3, t.y + dy + 3, tc.shadow);
-    for (let dy = -t.r; dy <= t.r; dy++)
-      for (let dx = -t.r; dx <= t.r; dx++) {
-        const dd = Math.hypot(dx, dy) + Math.random() * 0.8;
-        if (dd > t.r) continue;
-        const c = dd > t.r - 1.2 ? tc.rim : dx + dy < -t.r * 0.5 ? tc.light : dx + dy > t.r * 0.4 ? tc.dark : tc.mid;
-        put(t.x + dx, t.y + dy, c, SOLID);
-      }
-  }
-  return trees;
-}
-
-/** Water with a sandy shore; stays clear of the road so cars can't reach it by accident. */
-function paintLake(put: Put, surf: Uint8Array, track: Track) {
-  const { width: WW, height: WH } = track;
-  const { x: lx, y: ly, rx, ry } = track.lake!;
-  const water = track.theme.water;
-  const at = (x: number, y: number) => (x < 0 || y < 0 || x >= WW || y >= WH ? GRASS : surf[y * WW + x]);
-  for (let dy = -(ry + 8); dy <= ry + 8; dy++)
-    for (let dx = -(rx + 5); dx <= rx + 5; dx++) {
-      const e = (dx / rx) ** 2 + (dy / ry) ** 2 + Math.sin(dx * 0.07) * 0.05;
-      const X = (lx + dx) | 0;
-      const Y = (ly + dy) | 0;
-      if (e > 1 || at(X, Y) !== GRASS) continue;
-      let near = false;
-      for (const o of [
-        [8, 0],
-        [-8, 0],
-        [0, 8],
-        [0, -8],
-      ]) {
-        const v = at(X + o[0], Y + o[1]);
-        if (v === ASPHALT || v === CURB) near = true;
-      }
-      if (near) continue;
-      const c = e > 0.88 ? water.shore : (dx + dy * 3 + ((dy * 7) % 5)) % 17 === 0 ? water.glint : water.deep;
-      put(X, Y, c, e > 0.88 ? GRASS : WATER);
-    }
-}
-
-/** Boost strips go on the long straights, spread round the lap and away from the start grid. */
-function placeBoosts(S: Sample[]): { pad: BoostPad; idx: number }[] {
-  const N = S.length;
-  const turn = turnAhead(S);
-  const out: { pad: BoostPad; idx: number }[] = [];
-  let last = -1e9;
-  for (let i = 80; i < N - 60 && out.length < 4; i++) {
-    let straight = true;
-    for (let k = 0; k < 30 && straight; k++) if (turn[(i + k) % N] > 0.14) straight = false;
-    if (!straight || i - last < N / 5) continue;
-    const s = S[i + 15];
-    out.push({ pad: { x: s.x, y: s.y, tx: s.tx, ty: s.ty }, idx: i + 15 });
-    last = i;
-  }
-  return out;
-}
-
-function paintBoost(put: Put, p: BoostPad) {
-  const nx = -p.ty;
-  const ny = p.tx;
-  for (let u = -14; u <= 14; u += 0.5)
-    for (let v = -12; v <= 12; v += 0.5) {
-      let c: number[] = [16, 24, 48];
-      if (Math.abs(u) >= 13 || Math.abs(v) >= 11.5) c = [255, 230, 60];
-      else if ((((v + Math.abs(u) * 0.5 + 100) % 8) + 8) % 8 < 3) c = [90, 230, 255];
-      put(p.x + nx * u + p.tx * v, p.y + ny * u + p.ty * v, c);
-    }
-}
-
-/** Puddles (less grip) and oil (almost none) scattered on the asphalt. Same track, same spots. */
-function paintHazards(put: Put, surf: Uint8Array, hazard: Uint8Array, track: Track, S: Sample[], hw: Float32Array, avoid: number[]) {
-  const { width: WW, height: WH } = track;
-  const N = S.length;
-  let h = 2166136261;
-  for (const ch of track.id) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
-  const rng = mulberry32(h >>> 0);
-  const placed: number[] = [...avoid];
-  const kinds = [HAZ_PUDDLE, HAZ_PUDDLE, HAZ_OIL, HAZ_PUDDLE, HAZ_PUDDLE, HAZ_OIL, HAZ_PUDDLE, HAZ_OIL, HAZ_PUDDLE];
-  for (const kind of kinds) {
-    let idx = -1;
-    for (let t = 0; t < 40 && idx < 0; t++) {
-      const i = 80 + Math.floor(rng() * (N - 140));
-      if (placed.every((p) => Math.min(Math.abs(p - i), N - Math.abs(p - i)) > 24)) idx = i;
-    }
-    if (idx < 0) continue;
-    placed.push(idx);
-    const s = S[idx];
-    const lat = (rng() - 0.5) * 2 * hw[idx] * 0.6;
-    const cx = s.x + s.nx * lat;
-    const cy = s.y + s.ny * lat;
-    const rA = kind === HAZ_PUDDLE ? 11 + rng() * 6 : 8 + rng() * 3; // across the road
-    const rB = kind === HAZ_PUDDLE ? rA * 0.7 : rA; // along it
-    for (let dy = -rA - 2; dy <= rA + 2; dy += 0.5)
-      for (let dx = -rA - 2; dx <= rA + 2; dx += 0.5) {
-        // dx runs across the road (normal), dy along it (tangent)
-        const e = (dx / rA) ** 2 + (dy / rB) ** 2 + Math.sin(dx * 0.5 + dy * 0.3) * 0.06;
-        if (e > 1) continue;
-        const X = Math.floor(cx + s.nx * dx + s.tx * dy);
-        const Y = Math.floor(cy + s.ny * dx + s.ty * dy);
-        if (X < 0 || Y < 0 || X >= WW || Y >= WH || surf[Y * WW + X] !== ASPHALT) continue;
-        hazard[Y * WW + X] = kind;
-        const spark = Math.random();
-        const c = kind === HAZ_PUDDLE ? (spark < 0.08 ? [130, 180, 220] : [46, 80, 126]) : spark < 0.1 ? [80, 46, 110] : [20, 18, 28];
-        put(X, Y, c);
-      }
-  }
-}
-
-function makeMinimap(S: Sample[], WW: number, WH: number) {
-  const mini = document.createElement('canvas');
-  mini.width = 70;
-  mini.height = 50;
-  const m = mini.getContext('2d')!;
-  m.fillStyle = 'rgba(0,0,0,.55)';
-  m.fillRect(0, 0, 70, 50);
-  m.fillStyle = '#d8d8e0';
-  for (const s of S) m.fillRect(((s.x / WW) * 66 + 2) | 0, ((s.y / WH) * 46 + 2) | 0, 1, 1);
-  return mini;
-}
-
 export function buildWorld(track: Track): World {
   const { S, N } = sampleCenterline(track.cp);
   const aiSpd = aiSpeeds(S);
   const hw = roadWidths(S, track.halfWidth, track.cornerExtra);
-  const { img, surf, put } = paintTerrain(track, S, hw);
-  paintStart(put, S[0], track.halfWidth);
-  paintGrandstand(put, S[0], track.halfWidth);
-  const boosts = placeBoosts(S);
-  for (const b of boosts) paintBoost(put, b.pad);
-  const hazard = new Uint8Array(track.width * track.height);
-  paintHazards(put, surf, hazard, track, S, hw, boosts.map((b) => b.idx));
-  const trees = plantProps(put, surf, track);
-  if (track.lake) paintLake(put, surf, track);
-  const mini = makeMinimap(S, track.width, track.height);
-  return { track, w: track.width, h: track.height, S, N, aiSpd, hw, base: img, surf, trees, boosts: boosts.map((b) => b.pad), hazard, mini };
+  const p = paintWorld(track, S, hw, turnAhead(S));
+  return { track, w: track.width, h: track.height, S, N, aiSpd, hw, base: p.img, surf: p.surf, trees: p.trees, boosts: p.boosts, water: p.water, hazard: p.hazard, mini: p.mini };
 }

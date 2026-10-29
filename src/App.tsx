@@ -7,9 +7,8 @@ import { credit, loadSave, withDrift, withLap, withResult, writeSave } from './g
 import type { Save } from './game/save';
 import type { Track } from './race/track';
 import { allTracks, findTrack } from './race/tracks';
-import Career from './screens/Career';
-import FreeRace from './screens/FreeRace';
 import Garage from './screens/Garage';
+import { Career, FreeRace } from './screens/Lists';
 import Menu from './screens/Menu';
 import RaceScreen from './screens/RaceScreen';
 

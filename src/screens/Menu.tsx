@@ -1,26 +1,65 @@
+import { useState } from 'react';
 import type { Save } from '../game/save';
+import Retro from '../ui/Retro';
+import type { RetroScreen } from '../ui/Retro';
+import { nav } from '../ui/nav';
+import { C, W, button, copperBackground, logo, rasterBars, stars, text } from '../ui/kit';
 
-export default function Menu({ save, onCareer, onFree, onAttack, onDrift, onGarage, onDaily }: { save: Save; onCareer: () => void; onFree: () => void; onAttack: () => void; onDrift: () => void; onGarage: () => void; onDaily: () => void }) {
-  const medals = Object.values(save.best);
+interface Props {
+  save: Save;
+  onCareer: () => void;
+  onFree: () => void;
+  onAttack: () => void;
+  onDrift: () => void;
+  onGarage: () => void;
+  onDaily: () => void;
+}
+
+const BTN_W = 150;
+const BTN_H = 13;
+const TOP = 80;
+const STEP = 15;
+
+export default function Menu(p: Props) {
+  const [sel, setSel] = useState(0);
+  const items: [string, () => void][] = [
+    ['CAREER', p.onCareer],
+    ['FREE RACE', p.onFree],
+    ['TIME ATTACK', p.onAttack],
+    ['DRIFT CHALLENGE', p.onDrift],
+    [`GARAGE  $${p.save.money}`, p.onGarage],
+    ['DAILY TRACK', p.onDaily],
+  ];
+  const medals = Object.values(p.save.best);
   const gold = medals.filter((b) => b.medal === 3).length;
-  return (
-    <main className="screen menu">
-      <h1 className="title">DRIFT KING</h1>
-      <nav>
-        <button autoFocus onClick={onCareer}>
-          CAREER
-        </button>
-        <button onClick={onFree}>FREE RACE</button>
-        <button onClick={onAttack}>TIME ATTACK</button>
-        <button onClick={onDrift}>DRIFT CHALLENGE</button>
-        <button onClick={onGarage}>GARAGE · $ {save.money}</button>
-        <button onClick={onDaily}>DAILY TRACK</button>
-      </nav>
-      <p className="hint">
-        ARROWS / WASD STEER · SPACE HANDBRAKE · ESC LEAVES A RACE
-        <br />
-        {gold} GOLD · {medals.length} TRACKS DRIVEN
-      </p>
-    </main>
-  );
+  const at = (y: number) => Math.floor((y - TOP) / STEP);
+
+  const screen: RetroScreen = {
+    draw(ctx, t) {
+      copperBackground(ctx);
+      stars(ctx, t);
+      rasterBars(ctx, t, 34, 12);
+      logo(ctx, 'DRIFT KING', W / 2, 24, 4);
+      text(ctx, 'TOP DOWN DRIFT RACING', W / 2, 54, C.cyan, { align: 'center' });
+      items.forEach(([label], i) => button(ctx, label, (W - BTN_W) / 2, TOP + i * STEP, BTN_W, BTN_H, i === sel));
+      text(ctx, 'UP DOWN SELECT   ENTER GO', W / 2, 176, C.dim, { align: 'center' });
+      text(ctx, `${gold} GOLD   ${medals.length} TRACKS DRIVEN`, W / 2, 185, C.gold, { align: 'center' });
+      text(ctx, 'ARROWS STEER  SPACE HANDBRAKE  ESC LEAVES A RACE', W / 2, 193, C.navy4, { align: 'center' });
+    },
+    key(e) {
+      const n = nav(e);
+      if (n === 'up') setSel((sel + items.length - 1) % items.length);
+      else if (n === 'down') setSel((sel + 1) % items.length);
+      else if (n === 'ok') items[sel][1]();
+    },
+    hover(x, y) {
+      const i = at(y);
+      if (i >= 0 && i < items.length && Math.abs(x - W / 2) < BTN_W / 2) setSel(i);
+    },
+    click(x, y) {
+      const i = at(y);
+      if (i >= 0 && i < items.length && Math.abs(x - W / 2) < BTN_W / 2) items[i][1]();
+    },
+  };
+  return <Retro screen={screen} />;
 }

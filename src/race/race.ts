@@ -119,6 +119,16 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
   const grid = createGrid(world, FIELD, opts.car?.look, opts.car?.stats);
   const cars = attack || driftMode ? grid.filter((c) => !c.ai) : grid;
   const player = cars.find((c) => !c.ai)!;
+  // dev shortcut: ?at=<centre-line sample> starts the player part-way round, for looking at the scenery
+  const at = Number(new URLSearchParams(location.search).get('at'));
+  if (at > 0 && at < N) {
+    const s = S[at];
+    player.x = s.x;
+    player.y = s.y;
+    player.a = Math.atan2(s.ty, s.tx);
+    player.idx = at;
+    player.lap = 1;
+  }
   const finishers: Car[] = [];
   let parts: Part[] = [];
   let state: 'race' | 'done' = 'race';
@@ -154,7 +164,7 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
     },
     treeHit: (t) => {
       for (let i = 0; i < 8; i++)
-        parts.push({ x: t.x + rnd(-t.r, t.r), y: t.y + rnd(-t.r, t.r), vx: rnd(-0.6, 0.6), vy: rnd(-0.6, 0.6), life: 30, max: 30, kind: 'leaf' });
+        parts.push({ x: t.x + rnd(-t.r, t.r), y: t.y + rnd(-t.r, t.r), vx: rnd(-0.6, 0.6), vy: rnd(-0.6, 0.6), life: 30, max: 30, kind: t.kind === 'tire' ? 'dirt' : 'leaf' });
     },
   };
 
