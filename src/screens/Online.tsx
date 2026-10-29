@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { host, join, webrtcAvailable } from '../net/link';
-import type { Link, Pending } from '../net/link';
+import type { Link } from '../net/link';
+import { hostRoom, joinRoom } from '../net/relay';
+import type { Room } from '../net/relay';
 import { PLAYER_LOOKS } from '../net/session';
 import type { Session } from '../net/session';
 import type { Save } from '../game/save';
@@ -31,27 +32,16 @@ async function copy(code: string): Promise<boolean> {
     await navigator.clipboard.writeText(code);
     return true;
   } catch {
-    window.prompt('COPY THIS CODE AND SEND IT TO YOUR FRIEND', code);
     return false;
   }
-}
-
-async function paste(what: string): Promise<string | null> {
-  try {
-    const t = await navigator.clipboard.readText();
-    if (t.trim()) return t;
-  } catch {
-    /* no permission: ask for it by hand */
-  }
-  return window.prompt(`PASTE ${what}`);
 }
 
 const BTN_X = 60;
 const BTN_W = W - 120;
 
 /**
- * Pairing for a duel, with no server: the host picks a track and gets a code to send to the friend, the friend pastes
- * it and gets a reply code, the host pastes that, and the connection opens. Then the game starts on both sides.
+ * Pairing for a duel: the host picks a track and gets a short room code, the friend types it, and the two find each
+ * other through a public broker (see net/relay.ts). Then the game starts on both sides.
  */
 export default function Online({ save, look, conditions, onStart, onBack }: Props) {
   const [phase, setPhase] = useState<Phase>('menu');
@@ -60,7 +50,7 @@ export default function Online({ save, look, conditions, onStart, onBack }: Prop
   const [err, setErr] = useState('');
   const [code, setCode] = useState('');
   const [linked, setLinked] = useState(false);
-  const pending = useRef<(Pending & { accept?: (a: string) => Promise<boolean> }) | null>(null);
+  const pending = useRef<Room | null>(null);
   const link = useRef<Link | null>(null);
   const started = useRef(false);
   const track = useRef<Track | null>(null);
@@ -113,47 +103,33 @@ export default function Online({ save, look, conditions, onStart, onBack }: Prop
     track.current = t;
     setPhase('host');
     setErr('');
-    setMsg('MAKING A CODE...');
+    setMsg('OPENING A ROOM...');
     try {
-      const h = await host();
-      if (!live.current) return h.cancel();
-      pending.current = h;
-      setCode(h.code);
-      const ok = await copy(h.code);
-      setMsg(ok ? 'CODE COPIED. SEND IT TO YOUR FRIEND' : 'SEND THE CODE TO YOUR FRIEND');
-      h.connected.then(linkUp).catch(fail);
+      const room = await hostRoom();
+      if (!live.current) return room.cancel();
+      pending.current = room;
+      setCode(room.code);
+      setMsg((await copy(room.code)) ? 'ROOM CODE COPIED. WAITING FOR YOUR FRIEND...' : 'WAITING FOR YOUR FRIEND...');
+      room.connected.then(linkUp).catch(fail);
     } catch (e) {
       fail(e);
     }
   };
 
-  const takeReply = async () => {
-    const h = pending.current;
-    if (!h?.accept) return;
-    const text = await paste('THE REPLY CODE FROM YOUR FRIEND');
+  const enterCode = async () => {
+    const text = window.prompt('TYPE THE ROOM CODE YOUR FRIEND GAVE YOU');
     if (text === null) return;
     setErr('');
-    if (await h.accept(text)) setMsg('CONNECTING...');
-    else setErr('THAT IS NOT THE REPLY CODE');
-  };
-
-  const takeInvite = async () => {
-    const text = await paste('THE CODE FROM THE HOST');
-    if (text === null) return;
-    setErr('');
-    setMsg('MAKING A REPLY CODE...');
+    setMsg('JOINING THE ROOM...');
     try {
-      const p = await join(text);
-      if (!live.current) return p?.cancel();
-      if (!p) {
+      const room = await joinRoom(text);
+      if (!live.current) return room?.cancel();
+      if (!room) {
         setMsg('');
-        return setErr('THAT IS NOT A HOST CODE');
+        return setErr('THAT IS NOT A ROOM CODE');
       }
-      pending.current = p;
-      setCode(p.code);
-      const ok = await copy(p.code);
-      setMsg(ok ? 'REPLY CODE COPIED. SEND IT BACK TO THE HOST' : 'SEND THE REPLY CODE TO THE HOST');
-      p.connected.then(linkUp).catch(fail);
+      pending.current = room;
+      room.connected.then(linkUp).catch(fail);
     } catch (e) {
       fail(e);
     }
@@ -192,39 +168,37 @@ export default function Online({ save, look, conditions, onStart, onBack }: Prop
     ];
   else if (phase === 'host')
     buttons = [
-      { label: 'COPY CODE AGAIN', act: () => void copy(code).then((ok) => ok && setMsg('CODE COPIED. SEND IT TO YOUR FRIEND')), off: !code },
-      { label: 'PASTE REPLY CODE', act: () => void takeReply(), off: !code || linked },
+      { label: 'COPY ROOM CODE', act: () => void copy(code).then((ok) => ok && setMsg('ROOM CODE COPIED')), off: !code },
       { label: 'BACK', act: () => (reset(), setPhase('menu')) },
     ];
   else
     buttons = [
-      { label: 'PASTE HOST CODE', act: () => void takeInvite(), off: !!code },
-      { label: 'COPY REPLY AGAIN', act: () => void copy(code).then((ok) => ok && setMsg('REPLY CODE COPIED. SEND IT BACK TO THE HOST')), off: !code },
+      { label: 'ENTER ROOM CODE', act: () => void enterCode(), off: linked },
       { label: 'BACK', act: () => (reset(), setPhase('menu')) },
     ];
-  const TOP = phase === 'menu' ? 96 : 118;
+  const TOP = phase === 'menu' ? 96 : 130;
   const STEP = 15;
   const at = (y: number) => Math.floor((y - TOP) / STEP);
   const press = (i: number) => buttons[i] && !buttons[i].off && buttons[i].act();
 
   const lines: string[] =
     phase === 'menu'
-      ? ['PLAY AGAINST A FRIEND OVER THE INTERNET.', 'NO ACCOUNT AND NO SERVER: YOU SWAP TWO CODES', 'IN ANY CHAT, THEN THE GAME CONNECTS BY ITSELF.']
+      ? ['PLAY AGAINST A FRIEND OVER THE INTERNET.', 'THE HOST GETS A SHORT ROOM CODE, THE FRIEND', 'TYPES IT IN. NO ACCOUNT NEEDED.']
       : phase === 'host'
-        ? [`TRACK ${track.current?.name ?? ''}`, '1  SEND THE CODE TO YOUR FRIEND', '2  PASTE THE REPLY CODE YOU GET BACK']
-        : ['1  PASTE THE CODE YOUR FRIEND SENT YOU', '2  SEND THE REPLY CODE BACK TO THEM', 'THE RACE STARTS WHEN THEY HAVE PASTED IT'];
+        ? [`TRACK ${track.current?.name ?? ''}`, 'TELL YOUR FRIEND TO CHOOSE JOIN A GAME', 'AND TYPE THIS ROOM CODE']
+        : ['ASK THE HOST FOR THEIR ROOM CODE', 'CHOOSE ENTER ROOM CODE AND TYPE IT', 'THE RACE STARTS WHEN YOU ARE IN'];
 
   const screen: RetroScreen = {
     draw(ctx, t) {
       copperBackground(ctx);
       header(ctx, 'PLAY ONLINE');
-      bevel(ctx, 20, 34, W - 40, phase === 'menu' ? 50 : 66, 'rgba(0,0,17,.7)', true);
+      bevel(ctx, 20, 34, W - 40, phase === 'menu' ? 50 : phase === 'host' ? 88 : 56, 'rgba(0,0,17,.7)', true);
       lines.forEach((l, i) => text(ctx, l, W / 2, 42 + i * 11, i === 0 && phase !== 'menu' ? C.gold : C.ink, { align: 'center', small: phase === 'menu' }));
       if (phase !== 'menu') {
         const dots = '...'.slice(0, 1 + (Math.floor(t * 2) % 3));
         if (err) text(ctx, err, W / 2, 84, C.red, { align: 'center' });
         else if (msg) text(ctx, linked ? msg : msg.replace('...', dots), W / 2, 84, linked ? C.green : C.cyan, { align: 'center', small: true });
-        if (!webrtcAvailable()) text(ctx, 'THIS BROWSER CANNOT DO ONLINE PLAY', W / 2, 96, C.red, { align: 'center' });
+        if (phase === 'host' && code) text(ctx, code, W / 2, 97, C.gold, { align: 'center', scale: 3 });
       }
       buttons.forEach((b, i) => button(ctx, b.label, BTN_X, TOP + i * STEP, BTN_W, 12, i === sel && !b.off, b.off));
       text(ctx, 'UP DOWN SELECT   ENTER GO   ESC BACK', W / 2, 186, C.dim, { align: 'center', small: true });
