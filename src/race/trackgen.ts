@@ -1,5 +1,6 @@
 import { TAU, mulberry32, wrapAngle } from '../engine/util';
 import { sampleCenterline } from './track';
+import type { Sample } from './track';
 
 export interface GenOpts {
   width: number;
@@ -10,6 +11,8 @@ export interface GenOpts {
   twist?: number;
   /** Sharp-ish corners a track needs to be accepted. */
   minCorners?: number;
+  /** Real half width at every sample (hand-set wider spots); when given, it replaces `roadHalf` in the spacing test. */
+  hwOf?: (S: Sample[], cp: [number, number][]) => ArrayLike<number>;
 }
 
 type CP = [number, number][];
@@ -26,11 +29,13 @@ export function checkTrack(cp: CP, o: GenOpts): string | null {
   if (len < 3000) return 'TRACK TOO SHORT';
   if (len > 7000) return 'TRACK TOO LONG';
   for (const s of S) if (s.x < MARGIN || s.y < MARGIN || s.x > o.width - MARGIN || s.y > o.height - MARGIN) return 'TOO CLOSE TO THE EDGE';
-  const gap = 2 * (o.roadHalf + 5) + 24;
+  const hw = o.hwOf?.(S, cp);
+  const gap0 = 2 * (o.roadHalf + 5) + 24;
   for (let i = 0; i < N; i += 2)
     for (let j = i + 2; j < N; j += 2) {
       const near = Math.min(j - i, N - (j - i));
       if (near < 70) continue; // 280px along the track: same corner
+      const gap = hw ? hw[i] + hw[j] + 34 : gap0;
       if (Math.hypot(S[i].x - S[j].x, S[i].y - S[j].y) < gap) return 'ROAD TOUCHES ITSELF';
     }
   const head = (i: number) => Math.atan2(S[(i + N) % N].ty, S[(i + N) % N].tx);

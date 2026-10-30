@@ -1,8 +1,8 @@
 import { mulberry32 } from '../engine/util';
 import { generateCenterline, lakeSpot } from './trackgen';
 import type { GenOpts } from './trackgen';
-import { forgetWorld } from './track';
-import type { Ground, Props, Theme, Track } from './track';
+import { forgetWorld, trackWidths } from './track';
+import type { Ground, Props, Sample, Theme, Track } from './track';
 
 /* ------------------------------------------------------------------ */
 /* Environments: how a place looks and how it drives                   */
@@ -154,6 +154,10 @@ export const envRoad = (id: EnvId) => ENVS[id].theme.road.base;
 export const envLabel = (id: EnvId) => ENVS[id].label;
 export const envRoadHalf = (id: EnvId) => ENVS[id].halfWidth + ENVS[id].cornerExtra;
 
+/** Half road width at every sample of a custom track in this environment: `wide` px on every side, plus per-point extras. */
+export const envWidths = (id: EnvId, wide: number, pointExtra: number[], S: Sample[], cp: [number, number][]) =>
+  trackWidths({ halfWidth: ENVS[id].halfWidth + wide, cornerExtra: ENVS[id].cornerExtra, pointExtra }, S, cp);
+
 /* ------------------------------------------------------------------ */
 /* Tracks                                                              */
 /* ------------------------------------------------------------------ */
@@ -246,7 +250,15 @@ export interface CustomTrack {
   name: string;
   env: EnvId;
   cp: [number, number][];
+  /** Road width level 0..3 (each step adds `WIDTH_STEP` px to each side along the whole track). */
+  wd?: number;
+  /** Per control point, 0..3: a wider spot (each step adds `BUMP_STEP` px each side), e.g. for a corner to drift in. */
+  bump?: number[];
 }
+
+export const WIDTH_STEP = 4;
+export const BUMP_STEP = 6;
+export const MAX_LEVEL = 3;
 
 /** World size of custom tracks (the same as generated ones). */
 export const CUSTOM_W = 1700;
@@ -255,8 +267,13 @@ export const CUSTOM_H = 1100;
 export const isCustom = (t: { id: string }) => t.id.startsWith('custom-');
 
 export function customToTrack(c: CustomTrack): Track {
-  const o: GenOpts = { width: CUSTOM_W, height: CUSTOM_H, roadHalf: envRoadHalf(c.env) };
-  return fromEnv(c.id, c.name, c.env, CUSTOM_W, CUSTOM_H, c.cp, lakeSpot(c.cp, 7, o));
+  const wide = (c.wd ?? 0) * WIDTH_STEP;
+  const pointExtra = c.cp.map((_, i) => (c.bump?.[i] ?? 0) * BUMP_STEP);
+  const o: GenOpts = { width: CUSTOM_W, height: CUSTOM_H, roadHalf: envRoadHalf(c.env) + wide + Math.max(0, ...pointExtra) };
+  const t = fromEnv(c.id, c.name, c.env, CUSTOM_W, CUSTOM_H, c.cp, lakeSpot(c.cp, 7, o));
+  t.halfWidth += wide;
+  if (pointExtra.some((e) => e > 0)) t.pointExtra = pointExtra;
+  return t;
 }
 
 let custom: Track[] = [];

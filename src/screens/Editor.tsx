@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
-import { MAX_CUSTOM, exportTrack, importTrack, newDraft, optsFor } from '../game/custom';
-import { ENV_IDS, CUSTOM_H, CUSTOM_W, envGround, envLabel, envRoad } from '../race/tracks';
+import { MAX_CUSTOM, exportTrack, importTrack, newDraft, optsFor, withStart } from '../game/custom';
+import { ENV_IDS, BUMP_STEP, CUSTOM_H, CUSTOM_W, MAX_LEVEL, WIDTH_STEP, envGround, envLabel, envRoad, envWidths } from '../race/tracks';
 import type { CustomTrack } from '../race/tracks';
 import { checkTrack } from '../race/trackgen';
 import Retro from '../ui/Retro';
@@ -20,6 +20,14 @@ const rgb = (c: number[]) => `rgb(${c[0]},${c[1]},${c[2]})`;
 
 /** Points 0, 1 and the last two make the start straight: they keep one height so the grid has road to stand on. */
 const isStart = (i: number, n: number) => i === 0 || i === 1 || i >= n - 2;
+
+/** Which way the start straight runs, as a unit vector. */
+const startDir = (cp: CP): [number, number] => {
+  const dx = cp[1][0] - cp[cp.length - 1][0];
+  const dy = cp[1][1] - cp[cp.length - 1][1];
+  const l = Math.hypot(dx, dy) || 1;
+  return [dx / l, dy / l];
+};
 
 interface ListProps {
   tracks: CustomTrack[];
@@ -146,17 +154,20 @@ const SC = Math.min(231 / CUSTOM_W, 150 / CUSTOM_H);
  */
 export function Editor({ draft, onChange, onSave, onTest, onBack }: EditorProps) {
   const { cp, env } = draft;
+  const wd = draft.wd ?? 0;
+  const bump = draft.bump;
   const [sel, setSel] = useState(2);
   const [drag, setDrag] = useState(false);
   const [msg, setMsg] = useState('');
-  const problem = useMemo(() => checkTrack(cp, optsFor(env)), [cp, env]);
+  const problem = useMemo(() => checkTrack(cp, optsFor({ env, wd, bump })), [cp, env, wd, bump]);
   const length = useMemo(() => line(cp).length * 4, [cp]);
+  const widths = useMemo(() => envWidths(env, wd * WIDTH_STEP, cp.map((_, i) => (bump?.[i] ?? 0) * BUMP_STEP), line(cp), cp), [cp, env, wd, bump]);
 
   const toWorld = (x: number, y: number): [number, number] => [(x - MX) / SC, (y - MY) / SC];
   const inMap = (x: number, y: number) => x >= MX && y >= MY && x <= MX + CUSTOM_W * SC && y <= MY + CUSTOM_H * SC;
   const clampPt = (p: [number, number]): [number, number] => [Math.min(CUSTOM_W - 20, Math.max(20, Math.round(p[0]))), Math.min(CUSTOM_H - 20, Math.max(20, Math.round(p[1])))];
-  const set = (next: CP, s = sel) => {
-    onChange({ ...draft, cp: next });
+  const set = (next: CP, s = sel, nb = bump) => {
+    onChange({ ...draft, cp: next, bump: nb });
     setSel(s);
     setMsg('');
   };
@@ -164,12 +175,26 @@ export function Editor({ draft, onChange, onSave, onTest, onBack }: EditorProps)
   /** Moves a point; the start-straight points keep one height (moving the start point moves them all vertically). */
   const moveTo = (i: number, p: [number, number]) => {
     const n = cp.length;
-    const [x, y] = clampPt(p);
-    const next = cp.map((q) => [...q] as [number, number]);
+    const q = clampPt(p);
+    const next = cp.map((r) => [...r] as [number, number]);
     if (isStart(i, n)) {
-      if (i === 0) for (const k of [0, 1, n - 2, n - 1]) next[k][1] = y;
-      next[i][0] = x;
-    } else next[i] = [x, y];
+      const [ux, uy] = startDir(cp);
+      const [x0, y0] = cp[0];
+      if (i === 0) {
+        // the whole start straight follows sideways; along the line only the start point itself moves
+        const dx = q[0] - x0;
+        const dy = q[1] - y0;
+        const along = dx * ux + dy * uy;
+        for (const k of [1, n - 2, n - 1]) next[k] = clampPt([cp[k][0] + dx - along * ux, cp[k][1] + dy - along * uy]);
+        next[0] = q;
+      } else {
+        // the other three slide along the line through the start, staying on their own side of it
+        const was = (cp[i][0] - x0) * ux + (cp[i][1] - y0) * uy;
+        let t = (q[0] - x0) * ux + (q[1] - y0) * uy;
+        t = was > 0 ? Math.max(60, t) : Math.min(-60, t);
+        next[i] = clampPt([x0 + ux * t, y0 + uy * t]);
+      }
+    } else next[i] = q;
     set(next, i);
   };
   const nearest = (x: number, y: number) => {
@@ -193,12 +218,12 @@ export function Editor({ draft, onChange, onSave, onTest, onBack }: EditorProps)
     const b = cp[(i + 1) % n];
     const p = clampPt(at ?? [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]);
     const next = [...cp.slice(0, i + 1), p, ...cp.slice(i + 1)];
-    set(next, i + 1);
+    set(next, i + 1, bump && [...bump.slice(0, i + 1), 0, ...bump.slice(i + 1)]);
   };
   const remove = (i: number) => {
     if (cp.length <= MIN_POINTS) return setMsg('NEEDS AT LEAST 8 POINTS');
     if (isStart(i, cp.length)) return setMsg('THE START STRAIGHT STAYS');
-    set(cp.filter((_, k) => k !== i), Math.max(0, i - 1));
+    set(cp.filter((_, k) => k !== i), Math.max(0, i - 1), bump?.filter((_, k) => k !== i));
   };
   const segmentFor = (x: number, y: number) => {
     // which control-polygon segment is closest to the click
@@ -237,12 +262,19 @@ export function Editor({ draft, onChange, onSave, onTest, onBack }: EditorProps)
       ctx.fillRect(MX, MY, m, mh);
       ctx.fillRect(MX + mw - m, MY, m, mh);
       bevel(ctx, MX - 1, MY - 1, mw + 2, mh + 2, 'rgba(0,0,0,0)', true);
-      drawMap(ctx, cp, world, MX, MY, mw, mh, problem ? '#a66' : rgb(envRoad(env)), problem ? '#e44' : '#e33');
+      drawMap(ctx, cp, world, MX, MY, mw, mh, problem ? '#a66' : rgb(envRoad(env)), problem ? '#e44' : '#e33', widths);
       cp.forEach((p, i) => {
         const x = Math.round(MX + p[0] * SC);
         const y = Math.round(MY + p[1] * SC);
         ctx.fillStyle = '#000';
         ctx.fillRect(x - 3, y - 3, 7, 7);
+        const b = bump?.[i] ?? 0;
+        if (b > 0) {
+          ctx.fillStyle = C.gold;
+          ctx.fillRect(x - 3 - b, y - 3 - b, 7 + b * 2, 7 + b * 2);
+          ctx.fillStyle = '#000';
+          ctx.fillRect(x - 3, y - 3, 7, 7);
+        }
         ctx.fillStyle = i === sel ? C.orange : i === 0 ? C.green : isStart(i, cp.length) ? C.cyan : C.ink;
         ctx.fillRect(x - 2, y - 2, 5, 5);
       });
@@ -266,10 +298,10 @@ export function Editor({ draft, onChange, onSave, onTest, onBack }: EditorProps)
         }
         text(ctx, l, px, y, C.red, { small: true });
       }
-      const help = ['DRAG POINTS', 'CLICK ADDS', 'RIGHT CLICK', 'DELETES', '', 'E ENVIRONMENT', 'G NEW LAYOUT', 'T TEST DRIVE', 'ENTER SAVE'];
-      help.forEach((h, i) => text(ctx, h, px, 112 + i * 8, i < 4 ? C.dim : C.ink, { small: true }));
+      const help = ['DRAG POINTS', 'CLICK ADDS', 'RMB DELETES', 'E ENVIRONMENT', 'G NEW LAYOUT', `W ROAD WIDTH ${wd + 1}/${MAX_LEVEL + 1}`, `B WIDER HERE ${bump?.[sel] ?? 0}/${MAX_LEVEL}`, 'S START HERE', 'T TEST DRIVE', 'ENTER SAVE'];
+      help.forEach((h, i) => text(ctx, h, px, 109 + i * 7, i < 3 ? C.dim : C.ink, { small: true }));
       text(ctx, msg, MX, H - 20, C.red);
-      text(ctx, 'GREEN IS THE START. CYAN POINTS FORM THE START STRAIGHT.', MX, H - 9, C.dim, { small: true });
+      text(ctx, 'GREEN START   CYAN START STRAIGHT   YELLOW WIDER ROAD', MX, H - 9, C.dim, { small: true });
     },
     key(e) {
       const k = e.key;
@@ -282,10 +314,26 @@ export function Editor({ draft, onChange, onSave, onTest, onBack }: EditorProps)
         moveTo(sel, [p[0] + (k === 'ArrowRight' ? d : k === 'ArrowLeft' ? -d : 0), p[1] + (k === 'ArrowDown' ? d : k === 'ArrowUp' ? -d : 0)]);
       } else if (k === 'Insert' || k === 'n' || k === 'N') insertAfter(sel);
       else if (k === 'Delete' || k === 'Backspace' || k === 'x' || k === 'X') remove(sel);
-      else if (k === 'e' || k === 'E') onChange({ ...draft, env: ENV_IDS[(ENV_IDS.indexOf(env) + 1) % ENV_IDS.length] });
+      else if (k === 'w' || k === 'W') onChange({ ...draft, wd: (wd + 1) % (MAX_LEVEL + 1) });
+      else if (k === 'b' || k === 'B') {
+        if (isStart(sel, cp.length)) setMsg('NOT ON THE START STRAIGHT');
+        else {
+          const nb = bump ? [...bump] : cp.map(() => 0);
+          nb[sel] = ((nb[sel] ?? 0) + 1) % (MAX_LEVEL + 1);
+          onChange({ ...draft, bump: nb });
+          setMsg('');
+        }
+      } else if (k === 's' || k === 'S') {
+        if (sel === 0) setMsg('THAT IS ALREADY THE START');
+        else {
+          onChange(withStart(draft, sel));
+          setSel(0);
+          setMsg('');
+        }
+      } else if (k === 'e' || k === 'E') onChange({ ...draft, env: ENV_IDS[(ENV_IDS.indexOf(env) + 1) % ENV_IDS.length] });
       else if (k === 'g' || k === 'G') {
         const fresh = newDraft();
-        onChange({ ...draft, cp: fresh.cp });
+        onChange({ ...draft, cp: fresh.cp, bump: undefined });
         setSel(2);
       } else if (k === 't' || k === 'T') {
         if (problem) setMsg(problem);

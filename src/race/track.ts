@@ -57,6 +57,8 @@ export interface Track {
   laps: number;
   halfWidth: number; // half road width on the straights
   cornerExtra: number; // how much wider each side gets in the sharpest corners
+  /** Extra half road width in px at each control point (custom tracks); the road eases between them. */
+  pointExtra?: number[];
   props: Props;
   /** Off-road surface. */
   ground: Ground;
@@ -270,10 +272,46 @@ export function roadWidths(S: Sample[], half: number, extra: number) {
   return hw;
 }
 
+/** Adds per-control-point extra half width on top of `roadWidths`, easing from one point to the next. */
+export function addPointExtra(hw: Float32Array, S: Sample[], cp: [number, number][], extra: number[]) {
+  const N = S.length;
+  const at = cp.map((p) => {
+    let bi = 0;
+    let bd = 1e18;
+    for (let i = 0; i < N; i++) {
+      const d = (S[i].x - p[0]) ** 2 + (S[i].y - p[1]) ** 2;
+      if (d < bd) {
+        bd = d;
+        bi = i;
+      }
+    }
+    return bi;
+  });
+  for (let k = 0; k < cp.length; k++) {
+    const a = at[k];
+    const b = at[(k + 1) % cp.length];
+    const e0 = extra[k] ?? 0;
+    const e1 = extra[(k + 1) % cp.length] ?? 0;
+    if (e0 === 0 && e1 === 0) continue;
+    const len = (b - a + N) % N || N;
+    for (let j = 0; j < len; j++) {
+      const t = j / len;
+      hw[(a + j) % N] += e0 + (e1 - e0) * t * t * (3 - 2 * t);
+    }
+  }
+  return hw;
+}
+
+/** The half road width at every sample of a track: straights, wider corners, and any hand-set wider spots. */
+export function trackWidths(track: { halfWidth: number; cornerExtra: number; pointExtra?: number[] }, S: Sample[], cp: [number, number][]) {
+  const hw = roadWidths(S, track.halfWidth, track.cornerExtra);
+  return track.pointExtra?.some((e) => e > 0) ? addPointExtra(hw, S, cp, track.pointExtra) : hw;
+}
+
 export function buildWorld(track: Track): World {
   const { S, N } = sampleCenterline(track.cp);
   const aiSpd = aiSpeeds(S);
-  const hw = roadWidths(S, track.halfWidth, track.cornerExtra);
+  const hw = trackWidths(track, S, track.cp);
   const p = paintWorld(track, S, hw, turnAhead(S));
   return { track, w: track.width, h: track.height, S, N, aiSpd, hw, base: p.img, surf: p.surf, trees: p.trees, boosts: p.boosts, water: p.water, hazard: p.hazard, mini: p.mini };
 }
