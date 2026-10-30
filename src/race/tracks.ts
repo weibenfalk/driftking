@@ -190,6 +190,13 @@ export function generated(id: string, name: string, env: EnvId, seed: number, wi
   return fromEnv(id, name, env, width, height, cp, lakeSpot(cp, seed, o));
 }
 
+/** A figure eight with a start straight on the right; the editor's `8` key starts from it. */
+export const EIGHT_CP: [number, number][] = [
+  [1480, 520], [1480, 720], [1440, 850], [1300, 925], [1130, 905], [1010, 820], [930, 700], [880, 600], [800, 440], [700, 300],
+  [550, 215], [390, 235], [260, 350], [220, 540], [260, 730], [380, 860], [550, 900], [680, 830], [740, 760], [830, 560],
+  [930, 380], [1050, 250], [1200, 175], [1350, 175], [1480, 250], [1480, 380],
+];
+
 export const TRACKS: Track[] = [
   fromEnv(
     'meadow',
@@ -203,6 +210,19 @@ export const TRACKS: Track[] = [
     ],
     { x: 1000, y: 640, rx: 105, ry: 62 },
   ),
+  {
+    // a figure eight: the road crosses itself in the middle, the second pass going over a bridge
+    ...fromEnv(
+      'figure-eight',
+      'FIGURE EIGHT',
+      'meadow',
+      1700,
+      1100,
+      EIGHT_CP,
+      undefined,
+    ),
+    bridges: true,
+  },
   generated('lakeside', 'LAKESIDE', 'meadow', 11),
   generated('hills', 'ROLLING HILLS', 'meadow', 23),
   fromEnv(
@@ -254,6 +274,8 @@ export interface CustomTrack {
   wd?: number;
   /** Per control point, 0..3: a wider spot (each step adds `BUMP_STEP` px each side), e.g. for a corner to drift in. */
   bump?: number[];
+  /** Bridges allowed: the road may cross itself, the later stretch going over. */
+  br?: boolean;
 }
 
 export const WIDTH_STEP = 4;
@@ -273,6 +295,7 @@ export function customToTrack(c: CustomTrack): Track {
   const t = fromEnv(c.id, c.name, c.env, CUSTOM_W, CUSTOM_H, c.cp, lakeSpot(c.cp, 7, o));
   t.halfWidth += wide;
   if (pointExtra.some((e) => e > 0)) t.pointExtra = pointExtra;
+  if (c.br) t.bridges = true;
   return t;
 }
 

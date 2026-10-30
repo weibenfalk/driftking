@@ -45,11 +45,12 @@ function tidy(c: CustomTrack): CustomTrack {
   const out = { ...c };
   if (!lvl(c.wd)) delete out.wd;
   if (!Array.isArray(c.bump) || c.bump.length !== c.cp.length || !c.bump.every(lvl)) delete out.bump;
+  if (c.br !== true) delete out.br;
   return out;
 }
 
 /** Generator and validity-check settings for custom tracks. The editor does not demand a minimum number of corners. */
-export const optsFor = (c: Pick<CustomTrack, 'env' | 'wd' | 'bump'>) => {
+export const optsFor = (c: Pick<CustomTrack, 'env' | 'wd' | 'bump' | 'br'>) => {
   const wide = (c.wd ?? 0) * WIDTH_STEP;
   const pointExtra = (c.bump ?? []).map((b) => b * BUMP_STEP);
   return {
@@ -57,6 +58,7 @@ export const optsFor = (c: Pick<CustomTrack, 'env' | 'wd' | 'bump'>) => {
     height: CUSTOM_H,
     roadHalf: envRoadHalf(c.env) + wide + Math.max(0, ...pointExtra),
     minCorners: 0,
+    bridges: c.br === true,
     hwOf: (S: Sample[], cp: [number, number][]) => envWidths(c.env, wide, pointExtra, S, cp),
   };
 };
@@ -86,7 +88,7 @@ export function withStart(c: CustomTrack, k: number): CustomTrack {
     place(n - 1, -1, b);
     place(n - 2, -1, c2);
     if (bump) for (const i of [0, 1, n - 2, n - 1]) bump[i] = 0;
-    if (checkTrack(trial, optsFor({ env: c.env, wd: c.wd, bump })) === null) {
+    if (checkTrack(trial, optsFor({ env: c.env, wd: c.wd, bump, br: c.br })) === null) {
       best = trial;
       break;
     }
@@ -100,7 +102,7 @@ export function withStart(c: CustomTrack, k: number): CustomTrack {
 
 /** A track as a short text code that can be pasted to a friend: name, environment and the control points. */
 export function exportTrack(c: CustomTrack): string {
-  const json = JSON.stringify({ v: 2, n: c.name, e: c.env, p: c.cp.flat().map(Math.round), w: c.wd ?? 0, q: c.bump });
+  const json = JSON.stringify({ v: 2, n: c.name, e: c.env, p: c.cp.flat().map(Math.round), w: c.wd ?? 0, q: c.bump, b: c.br ? 1 : 0 });
   return 'DK1-' + btoa(json);
 }
 
@@ -115,7 +117,7 @@ export function importTrack(code: string): CustomTrack | null {
     const cp: [number, number][] = [];
     for (let i = 0; i < d.p.length; i += 2) cp.push([d.p[i], d.p[i + 1]]);
     if (cp.some(([x, y]) => x < 0 || x > CUSTOM_W || y < 0 || y > CUSTOM_H)) return null;
-    const t = tidy({ id: '', name: '', env: d.e, cp, wd: d.w, bump: d.q });
+    const t = tidy({ id: '', name: '', env: d.e, cp, wd: d.w, bump: d.q, br: d.b === 1 });
     if (checkTrack(cp, optsFor(t)) !== null) return null;
     const name = String(d.n ?? '').toUpperCase().replace(/[^A-Z0-9 ]/g, '').slice(0, 14).trim();
     return { ...t, name };

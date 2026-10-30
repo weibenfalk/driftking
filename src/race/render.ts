@@ -331,7 +331,7 @@ export function createRenderer(ctx: CanvasRenderingContext2D, world: World) {
       ctx.drawImage(looks[GHOST_LOOK].frames[fr], Math.round(g.x - ox) - SPRITE / 2, Math.round(g.y - oy) - SPRITE / 2);
       ctx.globalAlpha = 1;
     }
-    for (const c of cars) {
+    const drawCar = (c: Car) => {
       const fr = ((Math.round((c.a / TAU) * ROT) % ROT) + ROT) % ROT;
       const L = looks[c.look];
       const x = Math.round(c.x - ox) - SPRITE / 2;
@@ -340,6 +340,12 @@ export function createRenderer(ctx: CanvasRenderingContext2D, world: World) {
       ctx.drawImage(L.shadows[fr], x + 2, y + 2);
       ctx.globalAlpha = 1;
       ctx.drawImage(L.frames[fr], x, y);
+    };
+    // cars on the ground, then the bridges over them, then the cars driving on the bridges
+    for (const c of cars) if (!c.z) drawCar(c);
+    if (world.deckImg) {
+      ctx.drawImage(world.deckImg, ox, oy, SW, SH, 0, 0, SW, SH);
+      for (const c of cars) if (c.z) drawCar(c);
     }
     drawGantry(ox, oy);
     weather.draw(ctx, v.cond, cars, world, ox, oy);

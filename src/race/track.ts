@@ -2,7 +2,7 @@ import type { RGB } from '../engine/pal';
 import { clamp, wrapAngle } from '../engine/util';
 import { paintWorld } from './paint';
 import type { BoostPad, Tree } from './paint';
-import { GRASS, HAZ_NONE } from './surfaces';
+import { ASPHALT, GRASS, HAZ_NONE, PARAPET, SOLID } from './surfaces';
 
 export * from './surfaces';
 export type { BoostPad, Tree } from './paint';
@@ -59,6 +59,8 @@ export interface Track {
   cornerExtra: number; // how much wider each side gets in the sharpest corners
   /** Extra half road width in px at each control point (custom tracks); the road eases between them. */
   pointExtra?: number[];
+  /** The road may cross itself: the later stretch of each crossing becomes a bridge (see `findCrossings`). */
+  bridges?: boolean;
   props: Props;
   /** Off-road surface. */
   ground: Ground;
@@ -91,6 +93,12 @@ export interface World {
   /** Bounding box of the lake, so the renderer only animates water where there is some. */
   water: { x0: number; y0: number; x1: number; y1: number } | null;
   hazard: Uint8Array; // HAZ_* per pixel: puddles and oil on the road
+  /** 1 for centre-line samples where a car can be on the bridge level (the deck plus a few samples of run-on). */
+  lvl: Uint8Array;
+  /** Bridge decks: per pixel 1 = deck, 2 = parapet; null without bridges. */
+  deck: Uint8Array | null;
+  /** The deck, parapets and their shadow as a transparent bitmap, drawn over ground-level cars. */
+  deckImg: HTMLCanvasElement | null;
   mini: HTMLCanvasElement;
 }
 
@@ -108,10 +116,15 @@ export function forgetWorld(id: string) {
   worlds.delete(id);
 }
 
-export function surfAt(world: World, x: number, y: number) {
+/** What is under (x, y) for a car on level `z` (0 = ground, 1 = bridge deck: asphalt between solid parapets). */
+export function surfAt(world: World, x: number, y: number, z = 0) {
   x |= 0;
   y |= 0;
   if (x < 0 || y < 0 || x >= world.w || y >= world.h) return GRASS;
+  if (z && world.deck) {
+    const d = world.deck[y * world.w + x];
+    if (d) return d === 1 ? ASPHALT : SOLID;
+  }
   return world.surf[y * world.w + x];
 }
 
@@ -139,12 +152,13 @@ export function nearestIdx(world: World, x: number, y: number, from: number, bac
   return bi;
 }
 
-/** Closest centre-line sample anywhere on the track. */
-export function globalIdx(world: World, x: number, y: number) {
-  const { S, N } = world;
+/** Closest centre-line sample anywhere on the track; with `z`, only samples on that level (bridge or ground). */
+export function globalIdx(world: World, x: number, y: number, z?: number) {
+  const { S, N, lvl } = world;
   let bi = 0;
   let bd = 1e18;
   for (let i = 0; i < N; i++) {
+    if (z !== undefined && lvl[i] !== z) continue;
     const dd = (S[i].x - x) ** 2 + (S[i].y - y) ** 2;
     if (dd < bd) {
       bd = dd;
@@ -308,10 +322,97 @@ export function trackWidths(track: { halfWidth: number; cornerExtra: number; poi
   return track.pointExtra?.some((e) => e > 0) ? addPointExtra(hw, S, cp, track.pointExtra) : hw;
 }
 
+/** Samples either side of a crossing that belong to the bridge (and to the road below), so the deck has run-up. */
+const BRIDGE_RUN = 12;
+
+/**
+ * Where the road crosses itself. At every crossing the stretch that is driven later in the lap goes over the other
+ * one: `lvl` is 1 on its samples (the crossing itself plus `BRIDGE_RUN` each way), `near` marks every sample that
+ * takes part (over or under) so the "road touches itself" test can leave them alone. Returns an error text when the
+ * crossings are not usable: too shallow, too long, too near the start line or too near each other.
+ */
+export function findCrossings(S: Sample[], hw: ArrayLike<number>): { lvl: Uint8Array; zlvl: Uint8Array; near: Uint8Array } | string {
+  const N = S.length;
+  const over = new Uint8Array(N);
+  const under = new Uint8Array(N);
+  for (let i = 0; i < N; i++)
+    for (let j = i + 2; j < N; j++) {
+      if (Math.min(j - i, N - (j - i)) < 70) continue; // the same corner
+      const dx = S[j].x - S[i].x;
+      const dy = S[j].y - S[i].y;
+      const d2 = dx * dx + dy * dy;
+      const a = hw[i] + 13; // j's centre is on i's road
+      const b = hw[j] + 13; // i's centre is on j's road
+      if (d2 > Math.max(a, b) ** 2) continue;
+      if (Math.abs(S[i].tx * S[j].ty - S[i].ty * S[j].tx) < 0.5) return 'ROAD CROSSES AT TOO SHALLOW AN ANGLE';
+      if (d2 < a * a) over[j] = 1;
+      if (d2 < b * b) under[i] = 1;
+    }
+  const spread = (src: Uint8Array) => {
+    const out = new Uint8Array(N);
+    for (let i = 0; i < N; i++)
+      if (src[i]) for (let k = -BRIDGE_RUN; k <= BRIDGE_RUN; k++) out[(i + k + N) % N] = 1;
+    return out;
+  };
+  const lvl = spread(over);
+  const below = spread(under);
+  const touch = new Uint8Array(N);
+  let run = 0;
+  for (let i = 0; i < N; i++) {
+    touch[i] = lvl[i] | below[i];
+    if (!touch[i]) {
+      run = 0;
+      continue;
+    }
+    if (i < 60 || i >= N - 60) return 'CROSSING TOO CLOSE TO THE START';
+    if (lvl[i] && below[i]) return 'CROSSINGS TOO CLOSE TOGETHER';
+    run = lvl[i] ? run + 1 : 0;
+    if (run > 90) return 'BRIDGE TOO LONG';
+  }
+  // the roads stay close for a while either side of a crossing; that is not "touching"
+  const near = new Uint8Array(N);
+  for (let i = 0; i < N; i++)
+    if (touch[i]) for (let k = -70; k <= 70; k++) near[(i + k + N) % N] = 1;
+  // cars change level a little before the deck starts, so no car ever has its nose under a deck it is about to drive on
+  const zlvl = new Uint8Array(N);
+  for (let i = 0; i < N; i++)
+    if (lvl[i]) for (let k = -RUN_ON; k <= RUN_ON; k++) zlvl[(i + k + N) % N] = 1;
+  return { lvl, zlvl, near };
+}
+
+/** Samples before and after a deck where a car already counts as being on the bridge level. */
+const RUN_ON = 4;
+
+/** Level of a car that is not tracked over time (replays, the other player's car): on the bridge road within the bridge samples. */
+export function levelOf(world: World, c: { x: number; y: number; idx: number }) {
+  if (!world.lvl[c.idx]) return 0;
+  const s = world.S[c.idx];
+  return Math.abs((c.x - s.x) * s.nx + (c.y - s.y) * s.ny) <= world.hw[c.idx] + PARAPET + 2 ? 1 : 0;
+}
+
+/**
+ * Updates `c.z` after `c.idx` moved on from `prev`. A car gets on a bridge only by driving onto it from the ground at
+ * either end, and drops to the ground when it leaves the road beside it. A car beside or under the deck stays down,
+ * even when it passes the bridge's samples, so it can drive under it and is not held by the parapets.
+ */
+export function updateLevel(world: World, c: { x: number; y: number; idx: number; z: number }, prev: number) {
+  if (!world.lvl[c.idx]) {
+    c.z = 0;
+    return;
+  }
+  const s = world.S[c.idx];
+  const lat = Math.abs((c.x - s.x) * s.nx + (c.y - s.y) * s.ny);
+  if (lat > world.hw[c.idx] + PARAPET + 2) c.z = 0;
+  else if (!world.lvl[prev]) c.z = lat <= world.hw[c.idx] + 2 ? 1 : 0;
+}
+
 export function buildWorld(track: Track): World {
   const { S, N } = sampleCenterline(track.cp);
   const aiSpd = aiSpeeds(S);
   const hw = trackWidths(track, S, track.cp);
-  const p = paintWorld(track, S, hw, turnAhead(S));
-  return { track, w: track.width, h: track.height, S, N, aiSpd, hw, base: p.img, surf: p.surf, trees: p.trees, boosts: p.boosts, water: p.water, hazard: p.hazard, mini: p.mini };
+  const found = track.bridges ? findCrossings(S, hw) : null;
+  const deckLvl = found && typeof found !== 'string' ? found.lvl : new Uint8Array(N);
+  const lvl = found && typeof found !== 'string' ? found.zlvl : deckLvl;
+  const p = paintWorld(track, S, hw, turnAhead(S), deckLvl);
+  return { track, w: track.width, h: track.height, S, N, aiSpd, hw, base: p.img, surf: p.surf, trees: p.trees, boosts: p.boosts, water: p.water, hazard: p.hazard, lvl, deck: p.deck, deckImg: p.deckImg, mini: p.mini };
 }

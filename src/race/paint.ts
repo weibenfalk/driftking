@@ -1,7 +1,7 @@
 import { band, hash2, makeNoise, quantize, ramp, shade } from '../engine/pal';
 import type { RGB } from '../engine/pal';
 import { TAU, clamp, mulberry32 } from '../engine/util';
-import { ASPHALT, CURB, GRASS, HAZ_OIL, HAZ_PUDDLE, SOLID, WATER } from './surfaces';
+import { ASPHALT, CURB, GRASS, HAZ_OIL, HAZ_PUDDLE, PARAPET, SOLID, WATER } from './surfaces';
 import type { PropPalette, PropStyle, Sample, Track } from './track';
 
 /** A round obstacle: trees, rocks, cacti, tyre stacks. */
@@ -29,6 +29,8 @@ export interface Painted {
   boosts: BoostPad[];
   water: { x0: number; y0: number; x1: number; y1: number } | null;
   mini: HTMLCanvasElement;
+  deck: Uint8Array | null;
+  deckImg: HTMLCanvasElement | null;
 }
 
 /** Pixel access to the world bitmap and its surface map, with bounds checks. */
@@ -131,7 +133,7 @@ const REFS: [number, number, number, number][] = [
   [85, 87, 101, ASPHALT],
 ];
 
-function paintTerrain(track: Track, S: Sample[], hw: Float32Array, noise: Noise) {
+function paintTerrain(track: Track, S: Sample[], hw: Float32Array, noise: Noise, lvl: Uint8Array) {
   const { width: W, height: H, theme } = track;
   const N = S.length;
   const cv = document.createElement('canvas');
@@ -141,6 +143,7 @@ function paintTerrain(track: Track, S: Sample[], hw: Float32Array, noise: Noise)
   w.fillStyle = 'rgb(60,138,58)';
   w.fillRect(0, 0, W, H);
   for (let i = 0; i < N; i++) {
+    if (lvl[i]) continue; // a bridge is drawn as its own layer
     w.fillStyle = Math.floor(i / 3) % 2 ? 'rgb(236,236,236)' : 'rgb(216,50,42)';
     w.beginPath();
     w.arc(S[i].x, S[i].y, hw[i] + 5, 0, TAU);
@@ -148,6 +151,7 @@ function paintTerrain(track: Track, S: Sample[], hw: Float32Array, noise: Noise)
   }
   w.fillStyle = 'rgb(85,87,101)';
   for (let i = 0; i < N; i++) {
+    if (lvl[i]) continue;
     w.beginPath();
     w.arc(S[i].x, S[i].y, hw[i], 0, TAU);
     w.fill();
@@ -270,11 +274,12 @@ function paintEdges(px: Pix, track: Track) {
 }
 
 /** Edge lines and a dashed centre line. */
-function paintMarkings(px: Pix, S: Sample[], hw: Float32Array, track: Track) {
+function paintMarkings(px: Pix, S: Sample[], hw: Float32Array, track: Track, lvl: Uint8Array) {
   const { road } = track.theme;
   const N = S.length;
   const onRoad = (x: number, y: number) => px.at(x, y) === ASPHALT;
   for (let i = 0; i < N; i++) {
+    if (lvl[i]) continue;
     const a = S[i];
     const b = S[(i + 1) % N];
     const w = hw[i];
@@ -633,13 +638,13 @@ function paintLake(px: Pix, track: Track) {
 /* ------------------------------------------------------------------ */
 
 /** Boost strips go on the long straights, spread round the lap and away from the start grid. */
-function placeBoosts(S: Sample[], turn: Float32Array): { pad: BoostPad; idx: number }[] {
+function placeBoosts(S: Sample[], turn: Float32Array, lvl: Uint8Array): { pad: BoostPad; idx: number }[] {
   const N = S.length;
   const out: { pad: BoostPad; idx: number }[] = [];
   let last = -1e9;
   for (let i = 80; i < N - 60 && out.length < 4; i++) {
     let straight = true;
-    for (let k = 0; k < 30 && straight; k++) if (turn[(i + k) % N] > 0.14) straight = false;
+    for (let k = 0; k < 30 && straight; k++) if (turn[(i + k) % N] > 0.14 || lvl[(i + k) % N] || lvl[(i + k + 15) % N]) straight = false;
     if (!straight || i - last < N / 5) continue;
     const s = S[i + 15];
     out.push({ pad: { x: s.x, y: s.y, tx: s.tx, ty: s.ty }, idx: i + 15 });
@@ -662,7 +667,7 @@ function paintBoost(px: Pix, p: BoostPad) {
 }
 
 /** Puddles (less grip) and oil (almost none) scattered on the asphalt. Same track, same spots. */
-function paintHazards(px: Pix, hazard: Uint8Array, track: Track, S: Sample[], hw: Float32Array, avoid: number[]) {
+function paintHazards(px: Pix, hazard: Uint8Array, track: Track, S: Sample[], hw: Float32Array, avoid: number[], lvl: Uint8Array) {
   const { width: W, height: H } = track;
   const N = S.length;
   let h = 2166136261;
@@ -674,7 +679,7 @@ function paintHazards(px: Pix, hazard: Uint8Array, track: Track, S: Sample[], hw
     let idx = -1;
     for (let t = 0; t < 40 && idx < 0; t++) {
       const i = 80 + Math.floor(rng() * (N - 140));
-      if (placed.every((p) => Math.min(Math.abs(p - i), N - Math.abs(p - i)) > 24)) idx = i;
+      if (!lvl[i] && placed.every((p) => Math.min(Math.abs(p - i), N - Math.abs(p - i)) > 24)) idx = i;
     }
     if (idx < 0) continue;
     placed.push(idx);
@@ -732,25 +737,118 @@ function makeMinimap(S: Sample[], track: Track) {
   return mini;
 }
 
+/** Ground under a bridge that props must keep off (turned back into plain ground once everything is planted). */
+const UNDER = 7;
+
+/** Marks the bare ground a bridge stands over so no tree, board or tyre stack ends up under the deck. */
+function reserveBridge(px: Pix, S: Sample[], hw: Float32Array, lvl: Uint8Array) {
+  for (let i = 0; i < S.length; i++) {
+    if (!lvl[i]) continue;
+    const r = Math.ceil(hw[i] + 10);
+    const cx = Math.floor(S[i].x);
+    const cy = Math.floor(S[i].y);
+    for (let dy = -r; dy <= r; dy++)
+      for (let dx = -r; dx <= r; dx++) {
+        if (dx * dx + dy * dy > r * r || !px.inb(cx + dx, cy + dy)) continue;
+        const k = (cy + dy) * px.W + cx + dx;
+        if (px.surf[k] === GRASS) px.surf[k] = UNDER;
+      }
+  }
+}
+
+/**
+ * Bridges as a layer of their own: deck, parapets and a shadow on the ground, in a transparent bitmap that is drawn
+ * over cars on the ground and under cars on the bridge. Also the `deck` map (1 deck, 2 parapet) those cars drive on.
+ */
+function paintDeck(track: Track, S: Sample[], hw: Float32Array, lvl: Uint8Array) {
+  const { width: W, height: H } = track;
+  const N = S.length;
+  const cv = document.createElement('canvas');
+  cv.width = W;
+  cv.height = H;
+  const cx = cv.getContext('2d', { willReadFrequently: true })!;
+  const img = cx.createImageData(W, H);
+  const d = img.data;
+  const deck = new Uint8Array(W * H);
+  const { road } = track.theme;
+  const asphalt = shade(road.base, 1.12);
+  const rail: RGB = [196, 196, 208];
+  const railTop: RGB = [236, 236, 244];
+  const railIn: RGB = [92, 92, 108];
+  const mark = (x: number, y: number, c: RGB, code: number) => {
+    x = Math.floor(x);
+    y = Math.floor(y);
+    if (x < 0 || y < 0 || x >= W || y >= H) return;
+    const k = y * W + x;
+    d[k * 4] = c[0];
+    d[k * 4 + 1] = c[1];
+    d[k * 4 + 2] = c[2];
+    d[k * 4 + 3] = 255;
+    deck[k] = code;
+  };
+  // shadow on the ground, down and to the right of the deck; none at the ends, where the road runs on
+  for (let i = 0; i < N; i++) {
+    if (!lvl[i] || !lvl[(i + 4) % N] || !lvl[(i - 4 + N) % N]) continue;
+    const s = S[i];
+    const r = hw[i] + PARAPET;
+    for (let u = -r; u <= r; u += 0.5)
+      for (let v = -2; v < 2; v += 0.5) {
+        const x = Math.floor(s.x + s.nx * u + s.tx * v + 3);
+        const y = Math.floor(s.y + s.ny * u + s.ty * v + 3);
+        if (x < 0 || y < 0 || x >= W || y >= H) continue;
+        const k = (y * W + x) * 4;
+        d[k + 3] = 70;
+      }
+  }
+  for (let i = 0; i < N; i++) {
+    if (!lvl[i]) continue;
+    const s = S[i];
+    const h = hw[i];
+    const dash = Math.floor(i / 3) % 2 === 0;
+    for (let u = -h - PARAPET; u <= h + PARAPET; u += 0.5)
+      for (let v = -2; v < 2; v += 0.5) {
+        const x = s.x + s.nx * u + s.tx * v;
+        const y = s.y + s.ny * u + s.ty * v;
+        const a = Math.abs(u);
+        if (a > h) {
+          const o = a - h;
+          mark(x, y, o < 1 ? railIn : o > PARAPET - 1.2 ? railTop : rail, 2);
+        } else {
+          let c = asphalt;
+          if (road.marks && a > h - 4 && a < h - 3) c = road.line;
+          else if (road.marks && dash && a < 0.7) c = road.center;
+          mark(x, y, c, 1);
+        }
+      }
+  }
+  quantize(d);
+  cx.putImageData(img, 0, 0);
+  return { deck, deckImg: cv };
+}
+
 /** Paints the whole world bitmap and its surface and hazard maps. */
-export function paintWorld(track: Track, S: Sample[], hw: Float32Array, turn: Float32Array): Painted {
+export function paintWorld(track: Track, S: Sample[], hw: Float32Array, turn: Float32Array, lvl: Uint8Array): Painted {
   const rng = mulberry32(
     [...track.id].reduce((h, ch) => Math.imul(h ^ ch.charCodeAt(0), 16777619), 2166136261) >>> 0,
   );
   const noise = makeNoise(rng);
-  const px = paintTerrain(track, S, hw, noise);
+  const bridged = lvl.some((v) => v);
+  const px = paintTerrain(track, S, hw, noise, lvl);
+  if (bridged) reserveBridge(px, S, hw, lvl);
   paintGroundDetail(px, track);
   paintEdges(px, track);
-  paintMarkings(px, S, hw, track);
+  paintMarkings(px, S, hw, track, lvl);
   paintStart(px, S[0], track.halfWidth);
   paintGrandstand(px, S[0], track.halfWidth);
-  const boosts = placeBoosts(S, turn);
+  const boosts = placeBoosts(S, turn, lvl);
   for (const b of boosts) paintBoost(px, b.pad);
   const hazard = new Uint8Array(track.width * track.height);
-  paintHazards(px, hazard, track, S, hw, boosts.map((b) => b.idx));
+  paintHazards(px, hazard, track, S, hw, boosts.map((b) => b.idx), lvl);
   const water = track.lake ? paintLake(px, track) : null;
   paintAds(px, S, hw, turn);
   const trees = [...plantTyres(px, S, hw, turn), ...plantProps(px, track, rng)];
   quantize(px.d);
-  return { img: px.img, surf: px.surf, hazard, trees, boosts: boosts.map((b) => b.pad), water, mini: makeMinimap(S, track) };
+  if (bridged) for (let k = 0; k < px.surf.length; k++) if (px.surf[k] === UNDER) px.surf[k] = GRASS;
+  const deck = bridged ? paintDeck(track, S, hw, lvl) : null;
+  return { img: px.img, surf: px.surf, hazard, trees, boosts: boosts.map((b) => b.pad), water, mini: makeMinimap(S, track), deck: deck?.deck ?? null, deckImg: deck?.deckImg ?? null };
 }

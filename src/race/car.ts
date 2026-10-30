@@ -60,6 +60,8 @@ export interface Car {
   slide: boolean;
   /** How far into the slide the tyres are, 0..1: grip eases in and out instead of snapping. */
   sl: number;
+  /** Level: 0 on the ground, 1 on a bridge. Cars on different levels pass through each other. */
+  z: number;
   idx: number; // nearest centre-line sample
   lap: number;
   done: boolean;
@@ -297,6 +299,7 @@ function spawn(world: World, x: number, y: number, look: number, persona: Person
     steer: 0,
     slide: false,
     sl: 0,
+    z: 0,
     idx: globalIdx(world, x, y),
     lap: 0,
     done: false,
@@ -333,9 +336,9 @@ export function carFrame(c: Car, world: World) {
   const fy = Math.sin(c.a);
   const rx = -fy;
   const ry = fx;
-  const sf = surfAt(world, c.x, c.y);
+  const sf = surfAt(world, c.x, c.y, c.z);
   c.grass = sf === GRASS || sf === WATER;
-  c.hazard = hazardAt(world, c.x, c.y);
+  c.hazard = c.z ? HAZ_NONE : hazardAt(world, c.x, c.y);
   return { fx, fy, rx, ry, vf: c.vx * fx + c.vy * fy, vr: c.vx * rx + c.vy * ry };
 }
 
@@ -395,7 +398,7 @@ export function moveCar(c: Car, dt: number, env: Env) {
   const { world } = env;
   c.x += c.vx * dt;
   c.y += c.vy * dt;
-  if (surfAt(world, c.x, c.y) === SOLID) {
+  if (surfAt(world, c.x, c.y, c.z) === SOLID) {
     c.x -= c.vx * dt * 1.5;
     c.y -= c.vy * dt * 1.5;
     c.vx *= -0.3;
@@ -464,7 +467,7 @@ export function updateDraft(cars: Car[], dt: number) {
     const fy = Math.sin(c.a);
     let best = 0;
     for (const o of cars) {
-      if (o === c || o.vf < 1.5 || Math.cos(o.a - c.a) < 0.8) continue;
+      if (o === c || o.z !== c.z || o.vf < 1.5 || Math.cos(o.a - c.a) < 0.8) continue;
       const dx = o.x - c.x;
       const dy = o.y - c.y;
       const ahead = dx * fx + dy * fy;
@@ -481,6 +484,7 @@ export function collideCars(cars: Car[], onHit: (a: Car, b: Car, impact: number)
     for (let j = i + 1; j < cars.length; j++) {
       const a = cars[i];
       const b = cars[j];
+      if (a.z !== b.z) continue;
       const dx = b.x - a.x;
       const dy = b.y - a.y;
       const d = Math.hypot(dx, dy);

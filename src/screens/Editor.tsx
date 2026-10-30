@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 import { MAX_CUSTOM, exportTrack, importTrack, newDraft, optsFor, withStart } from '../game/custom';
-import { ENV_IDS, BUMP_STEP, CUSTOM_H, CUSTOM_W, MAX_LEVEL, WIDTH_STEP, envGround, envLabel, envRoad, envWidths } from '../race/tracks';
+import { ENV_IDS, BUMP_STEP, EIGHT_CP, CUSTOM_H, CUSTOM_W, MAX_LEVEL, WIDTH_STEP, envGround, envLabel, envRoad, envWidths } from '../race/tracks';
 import type { CustomTrack } from '../race/tracks';
+import { findCrossings } from '../race/track';
 import { checkTrack } from '../race/trackgen';
 import Retro from '../ui/Retro';
 import type { RetroScreen } from '../ui/Retro';
@@ -156,12 +157,19 @@ export function Editor({ draft, onChange, onSave, onTest, onBack }: EditorProps)
   const { cp, env } = draft;
   const wd = draft.wd ?? 0;
   const bump = draft.bump;
+  const br = draft.br === true;
   const [sel, setSel] = useState(2);
   const [drag, setDrag] = useState(false);
   const [msg, setMsg] = useState('');
-  const problem = useMemo(() => checkTrack(cp, optsFor({ env, wd, bump })), [cp, env, wd, bump]);
+  const problem = useMemo(() => checkTrack(cp, optsFor({ env, wd, bump, br })), [cp, env, wd, bump, br]);
   const length = useMemo(() => line(cp).length * 4, [cp]);
   const widths = useMemo(() => envWidths(env, wd * WIDTH_STEP, cp.map((_, i) => (bump?.[i] ?? 0) * BUMP_STEP), line(cp), cp), [cp, env, wd, bump]);
+  /** Which centre-line samples are on a bridge, for the map. */
+  const bridge = useMemo(() => {
+    if (!br) return null;
+    const f = findCrossings(line(cp), widths);
+    return typeof f === 'string' ? null : f.lvl;
+  }, [cp, widths, br]);
 
   const toWorld = (x: number, y: number): [number, number] => [(x - MX) / SC, (y - MY) / SC];
   const inMap = (x: number, y: number) => x >= MX && y >= MY && x <= MX + CUSTOM_W * SC && y <= MY + CUSTOM_H * SC;
@@ -263,6 +271,17 @@ export function Editor({ draft, onChange, onSave, onTest, onBack }: EditorProps)
       ctx.fillRect(MX + mw - m, MY, m, mh);
       bevel(ctx, MX - 1, MY - 1, mw + 2, mh + 2, 'rgba(0,0,0,0)', true);
       drawMap(ctx, cp, world, MX, MY, mw, mh, problem ? '#a66' : rgb(envRoad(env)), problem ? '#e44' : '#e33', widths);
+      if (bridge) {
+        const S = line(cp);
+        for (let i = 0; i < S.length; i += 2) {
+          if (!bridge[i]) continue;
+          const h = Math.max(2, Math.round(widths[i] * SC));
+          ctx.fillStyle = '#e4e4f4';
+          ctx.fillRect(Math.round(MX + S[i].x * SC) - h, Math.round(MY + S[i].y * SC) - h, h * 2 + 1, h * 2 + 1);
+          ctx.fillStyle = '#8890b8';
+          ctx.fillRect(Math.round(MX + S[i].x * SC) - h + 1, Math.round(MY + S[i].y * SC) - h + 1, h * 2 - 1, h * 2 - 1);
+        }
+      }
       cp.forEach((p, i) => {
         const x = Math.round(MX + p[0] * SC);
         const y = Math.round(MY + p[1] * SC);
@@ -298,10 +317,10 @@ export function Editor({ draft, onChange, onSave, onTest, onBack }: EditorProps)
         }
         text(ctx, l, px, y, C.red, { small: true });
       }
-      const help = ['DRAG POINTS', 'CLICK ADDS', 'RMB DELETES', 'E ENVIRONMENT', 'G NEW LAYOUT', `W ROAD WIDTH ${wd + 1}/${MAX_LEVEL + 1}`, `B WIDER HERE ${bump?.[sel] ?? 0}/${MAX_LEVEL}`, 'S START HERE', 'T TEST DRIVE', 'ENTER SAVE'];
-      help.forEach((h, i) => text(ctx, h, px, 109 + i * 7, i < 3 ? C.dim : C.ink, { small: true }));
+      const help = ['DRAG MOVE CLICK ADD', 'RIGHT CLICK DELETES', 'E ENVIRONMENT', 'G NEW LAYOUT', `W ROAD WIDTH ${wd + 1}/${MAX_LEVEL + 1}`, `B WIDER HERE ${bump?.[sel] ?? 0}/${MAX_LEVEL}`, 'S START HERE', `O BRIDGES ${br ? 'ON' : 'OFF'}`, '8 FIGURE EIGHT', 'T TEST DRIVE', 'ENTER SAVE'];
+      help.forEach((h, i) => text(ctx, h, px, 106 + i * 7, i < 2 ? C.dim : C.ink, { small: true }));
       text(ctx, msg, MX, H - 20, C.red);
-      text(ctx, 'GREEN START   CYAN START STRAIGHT   YELLOW WIDER ROAD', MX, H - 9, C.dim, { small: true });
+      text(ctx, 'GREEN START   CYAN START STRAIGHT   YELLOW WIDER   BLUE BRIDGE', MX, H - 9, C.dim, { small: true });
     },
     key(e) {
       const k = e.key;
@@ -330,7 +349,13 @@ export function Editor({ draft, onChange, onSave, onTest, onBack }: EditorProps)
           setSel(0);
           setMsg('');
         }
-      } else if (k === 'e' || k === 'E') onChange({ ...draft, env: ENV_IDS[(ENV_IDS.indexOf(env) + 1) % ENV_IDS.length] });
+      } else if (k === 'o' || k === 'O') onChange({ ...draft, br: !br });
+      else if (k === '8') {
+        onChange({ ...draft, cp: EIGHT_CP.map((p) => [...p] as [number, number]), br: true, bump: undefined });
+        setSel(2);
+        setMsg('');
+      }
+      else if (k === 'e' || k === 'E') onChange({ ...draft, env: ENV_IDS[(ENV_IDS.indexOf(env) + 1) % ENV_IDS.length] });
       else if (k === 'g' || k === 'G') {
         const fresh = newDraft();
         onChange({ ...draft, cp: fresh.cp, bump: undefined });

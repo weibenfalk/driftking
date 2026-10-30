@@ -54,7 +54,7 @@ export function aiDrive(c: Car, dt: number, env: Env, { player, racing, cars, pa
   let sideLat = 0;
   let beside = false;
   for (const o of cars) {
-    if (o === c) continue;
+    if (o === c || o.z !== c.z) continue;
     const dx = o.x - c.x;
     const dy = o.y - c.y;
     const fwd = dx * fx0 + dy * fy0;

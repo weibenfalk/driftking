@@ -4,7 +4,7 @@ import { createGrid } from './car';
 import type { Car } from './car';
 import type { Conditions } from './conditions';
 import { createRenderer, SH, SW } from './render';
-import { getWorld, globalIdx } from './track';
+import { getWorld, globalIdx, levelOf, nearestIdx } from './track';
 import type { Track } from './track';
 
 /** Every car's position through a race, sampled at `hz`: x, y, angle for each car per sample. */
@@ -67,7 +67,10 @@ export function createReplay(ctx: CanvasRenderingContext2D, track: Track, data: 
   let fixed = { x: 0, y: 0 };
   let init = false;
 
+  let lastT = 0;
   const pose = (t: number) => {
+    const jump = t < lastT || t - lastT > 0.5;
+    lastT = t;
     const p = clamp(t * data.hz, 0, samples - 1);
     const i = Math.floor(p);
     const k = p - i;
@@ -82,6 +85,9 @@ export function createReplay(ctx: CanvasRenderingContext2D, track: Track, data: 
       c.a = data.f[a + 2] + d * k;
       c.vx = (data.f[b] - data.f[a]) * data.hz / 60;
       c.vy = (data.f[b + 1] - data.f[a + 1]) * data.hz / 60;
+      // which level it is on (bridge or ground) follows from where along the track it is
+      c.idx = jump ? globalIdx(world, c.x, c.y, 0) : nearestIdx(world, c.x, c.y, c.idx, 30, 90);
+      c.z = levelOf(world, c);
     });
   };
 

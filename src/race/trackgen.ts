@@ -1,5 +1,5 @@
 import { TAU, mulberry32, wrapAngle } from '../engine/util';
-import { sampleCenterline } from './track';
+import { findCrossings, sampleCenterline } from './track';
 import type { Sample } from './track';
 
 export interface GenOpts {
@@ -13,6 +13,8 @@ export interface GenOpts {
   minCorners?: number;
   /** Real half width at every sample (hand-set wider spots); when given, it replaces `roadHalf` in the spacing test. */
   hwOf?: (S: Sample[], cp: [number, number][]) => ArrayLike<number>;
+  /** The road may cross itself (the later stretch becomes a bridge). */
+  bridges?: boolean;
 }
 
 type CP = [number, number][];
@@ -31,12 +33,19 @@ export function checkTrack(cp: CP, o: GenOpts): string | null {
   for (const s of S) if (s.x < MARGIN || s.y < MARGIN || s.x > o.width - MARGIN || s.y > o.height - MARGIN) return 'TOO CLOSE TO THE EDGE';
   const hw = o.hwOf?.(S, cp);
   const gap0 = 2 * (o.roadHalf + 5) + 24;
+  let crossing: Uint8Array | null = null;
+  if (o.bridges) {
+    const c = findCrossings(S, hw ?? new Float32Array(N).fill(o.roadHalf));
+    if (typeof c === 'string') return c;
+    crossing = c.near;
+  }
   for (let i = 0; i < N; i += 2)
     for (let j = i + 2; j < N; j += 2) {
       const near = Math.min(j - i, N - (j - i));
       if (near < 70) continue; // 280px along the track: same corner
+      if (crossing?.[i] && crossing[j]) continue; // a bridge crossing
       const gap = hw ? hw[i] + hw[j] + 34 : gap0;
-      if (Math.hypot(S[i].x - S[j].x, S[i].y - S[j].y) < gap) return 'ROAD TOUCHES ITSELF';
+      if (Math.hypot(S[i].x - S[j].x, S[i].y - S[j].y) < gap) return crossing ? 'ROADS TOO CLOSE. CROSS CLEARLY OR MOVE APART' : roadsCross(S, hw, o) ? 'ROAD CROSSES ITSELF. PRESS O FOR A BRIDGE' : 'ROAD TOUCHES ITSELF';
     }
   const head = (i: number) => Math.atan2(S[(i + N) % N].ty, S[(i + N) % N].tx);
   // corners: heading change over 72px. None too sharp, and enough of them to be worth driving.
@@ -47,6 +56,11 @@ export function checkTrack(cp: CP, o: GenOpts): string | null {
   if (corners < (o.minCorners ?? 6)) return 'NEEDS MORE CORNERS';
   if (Math.abs(wrapAngle(head(-25) - head(0))) > 0.08 || Math.abs(wrapAngle(head(25) - head(0))) > 0.08) return 'START STRAIGHT IS BENT';
   return null;
+}
+
+/** Whether a layout that fails the spacing test would be fine as a bridge crossing (to tell the player what to press). */
+function roadsCross(S: Sample[], hw: ArrayLike<number> | undefined, o: GenOpts) {
+  return typeof findCrossings(S, hw ?? new Float32Array(S.length).fill(o.roadHalf)) !== 'string';
 }
 
 export const validate = (cp: CP, o: GenOpts) => checkTrack(cp, o) === null;

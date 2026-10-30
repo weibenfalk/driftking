@@ -14,7 +14,7 @@ import type { Conditions } from './conditions';
 import type { GhostData } from './ghost';
 import { SH, SW, createRenderer } from './render';
 import type { Banner, Part, Popup } from './render';
-import { ASPHALT, CURB, HAZ_OIL, HAZ_PUDDLE, WATER, getWorld, globalIdx, nearestIdx, surfAt } from './track';
+import { ASPHALT, CURB, HAZ_OIL, HAZ_PUDDLE, WATER, getWorld, globalIdx, levelOf, nearestIdx, surfAt, updateLevel } from './track';
 import type { Track } from './track';
 
 const OFFROAD = 55; // grass beyond the curb before the player is reset
@@ -278,7 +278,7 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
     c.glob += 1;
     let ni = nearestIdx(world, c.x, c.y, prev);
     if (c.glob % 30 === 0) {
-      const g = globalIdx(world, c.x, c.y);
+      const g = globalIdx(world, c.x, c.y, c.z);
       const fw = (((g - prev) % N) + N) % N;
       if (fw < N / 4 || fw > N - 25) ni = g;
     }
@@ -289,12 +289,13 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
       else if (step >= N / 2 && ni > prev) crossed(c, -1);
     }
     c.idx = ni;
+    updateLevel(world, c, prev);
   }
 
   // Water or straying too far from the road sends a car back to its last road position, standing still.
   const safeIdx = new Map<Car, number>();
   function recover(c: Car) {
-    const sf = surfAt(world, c.x, c.y);
+    const sf = surfAt(world, c.x, c.y, c.z);
     if (sf === ASPHALT || sf === CURB) {
       safeIdx.set(c, c.idx);
       return;
@@ -487,7 +488,7 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
       if (c.hazard === HAZ_PUDDLE && sp > 1.2 && Math.random() < 0.6 * dt)
         parts.push({ x: wx, y: wy, vx: -c.vx * 0.2 + rnd(-0.5, 0.5), vy: -c.vy * 0.2 + rnd(-0.5, 0.5), life: 18, max: 18, kind: 'splash' });
       if (sliding && !c.grass) {
-        renderer.skid(wx, wy);
+        if (!c.z) renderer.skid(wx, wy); // (no tyre marks on a bridge: they would show on the road below)
         if (Math.random() < 0.35 * dt) parts.push({ x: wx, y: wy, vx: -c.vx * 0.15 + rnd(-0.2, 0.2), vy: -c.vy * 0.15 + rnd(-0.2, 0.2), life: 40, max: 40, kind: 'smoke' });
       }
       if (c.grass && sp > 1 && Math.random() < 0.4 * dt)
@@ -662,6 +663,7 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
     if (banner && banner.t < 900 && (banner.t -= dt) <= 0) banner = null;
     if (popup && (popup.t -= dt) <= 0 && chain === 0) popup = null;
 
+    if (guest) for (const c of cars) if (c !== player) c.z = levelOf(world, c); // (the host's car is not stepped on the guest)
     updateDraft(cars, dt);
     if (driftMode && state === 'race') {
       const left = Math.ceil(driftMode.limit - raceT);
