@@ -15,6 +15,8 @@ export const CUPS: Cup[] = [
   { id: 'forest', name: 'FOREST CUP', trackIds: ['pine-ridge', 'mud-creek', 'hollow', 'deep-woods', 'the-knot'] },
   { id: 'frost', name: 'FROST CUP', trackIds: ['ice-pass', 'frostbite', 'glacier', 'whiteout', 'loop-the-loop'] },
   { id: 'city', name: 'CITY CUP', trackIds: ['downtown', 'harbor', 'neon-alley', 'skyline', 'flyovers'] },
+  { id: 'tropical', name: 'TROPICAL CUP', trackIds: ['beach-run', 'lagoon', 'palm-bay', 'twin-lagoons', 'volcano'] },
+  { id: 'moon', name: 'MOON CUP', trackIds: ['crater-rim', 'tranquility', 'dark-side', 'lunar-loop', 'mare-eight'] },
 ];
 
 /**
@@ -28,7 +30,7 @@ export function careerPace(trackId: string): number {
   return i < 0 ? 1 : 0.92 + (i / (all.length - 1)) * 0.19;
 }
 
-/** Prize money grows with the cup (1.0, 1.15, 1.3, 1.45, 1.6), so the harder cups pay for the better cars. Other tracks: 1. */
+/** Prize money grows with the cup (1.0, 1.15, 1.3, 1.45, 1.6, 1.75, 1.9), so the harder cups pay for the better cars. Other tracks: 1. */
 export function careerPrize(trackId: string): number {
   const i = CUPS.findIndex((c) => c.trackIds.includes(trackId));
   return i < 0 ? 1 : 1 + i * 0.15;
@@ -63,6 +65,8 @@ const TUNE: Record<string, number> = {
   downtown: 1.035, harbor: 1.035, 'neon-alley': 1.045, skyline: 1.04,
   orchard: 1.03, 'figure-eight': 1, sandstorm: 1.02, 'oasis-eight': 1.02, hollow: 0.95,
   'the-knot': 0.9, glacier: 0.845, 'loop-the-loop': 0.845, flyovers: 1.01,
+  'beach-run': 1.015, lagoon: 1.035, 'palm-bay': 1.015, 'twin-lagoons': 1.01, volcano: 0.99,
+  'crater-rim': 0.955, tranquility: 0.93, 'dark-side': 0.93, 'lunar-loop': 0.97, 'mare-eight': 0.985,
 };
 const tunedPar = (track: Track) => parTime(track) * (TUNE[track.id] ?? 1);
 

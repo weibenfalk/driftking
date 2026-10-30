@@ -7,7 +7,7 @@ import { loadCustom, newDraft, writeCustom } from './game/custom';
 import { medalPay, payout, scalePayout } from './game/economy';
 import type { Mode } from './game/economy';
 import { selectedModel, selectedStats } from './game/garage';
-import { credit, loadSave, withDrift, withLap, withResult, writeSave } from './game/save';
+import { credit, emptySave, loadSave, withDrift, withLap, withResult, writeSave } from './game/save';
 import type { Save } from './game/save';
 import { DIFFICULTY, loadSettings, writeSettings } from './game/settings';
 import type { Settings as SettingsData } from './game/settings';
@@ -234,6 +234,7 @@ export default function App() {
       onDaily={() => race(daily(), 'menu')}
       onEditor={() => setScreen({ k: 'editlist' })}
       onSettings={() => setScreen({ k: 'settings' })}
+      onReset={() => commit(emptySave())}
     />
   );
 }

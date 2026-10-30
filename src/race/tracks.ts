@@ -146,7 +146,59 @@ const CITY: Env = {
   lake: true,
 };
 
-const ENVS = { meadow: MEADOW, desert: DESERT, forest: FOREST, snow: SNOW, city: CITY };
+const TROPICAL: Env = {
+  label: 'TROPICAL',
+  theme: {
+    // jungle greens that fade into sandy clearings
+    ground: [[17, 102, 68], [34, 136, 85], [68, 170, 85], [238, 221, 153]],
+    detail: 'tropical',
+    verge: [[119, 102, 51], [221, 204, 136]],
+    road: { base: [102, 102, 116], dark: [85, 85, 102], light: [153, 153, 170], line: [238, 238, 238], center: [255, 221, 51], marks: true },
+    curb: [[34, 187, 170], [255, 255, 255]],
+    props: {
+      palm: { ramp: [[17, 85, 34], [34, 136, 51], [68, 187, 68], [170, 238, 102]], rim: [8, 51, 17] },
+      tree: { ramp: [[17, 68, 34], [34, 119, 51], [51, 170, 68], [119, 221, 85]], rim: [8, 34, 17] },
+      bush: { ramp: [[34, 119, 51], [51, 153, 68], [102, 204, 85], [170, 238, 119]], rim: [17, 68, 34] },
+      rock: { ramp: [[51, 51, 60], [85, 85, 100], [119, 119, 136], [170, 170, 187]], rim: [17, 17, 26] },
+    },
+    water: { deep: [17, 119, 170], mid: [34, 187, 204], glint: [204, 255, 255], shore: [238, 221, 153] },
+    roofs: [],
+  },
+  ground: 'sand', // beach and undergrowth
+  roadGrip: 0.95,
+  props: { count: 700, dense: true, mix: [['palm', 7], ['tree', 3], ['bush', 4], ['rock', 1]] },
+  laps: 3,
+  halfWidth: 30,
+  cornerExtra: 18,
+  lake: true,
+};
+
+const MOON: Env = {
+  label: 'MOON',
+  theme: {
+    ground: [[51, 51, 64], [85, 85, 102], [119, 119, 136], [153, 153, 170]],
+    detail: 'moon',
+    verge: [[34, 34, 51], [102, 102, 119]],
+    // a track of packed dust, not tarmac: no markings, a rubble edge in two greys instead of kerbs
+    road: { base: [64, 62, 76], dark: [44, 42, 56], light: [104, 102, 118], line: [104, 102, 118], center: [104, 102, 118], marks: false },
+    curb: [[96, 94, 110], [128, 126, 142]],
+    props: {
+      rock: { ramp: [[51, 51, 68], [85, 85, 102], [136, 136, 153], [204, 204, 221]], rim: [17, 17, 34] },
+      crater: { ramp: [[34, 34, 51], [68, 68, 85], [119, 119, 136], [187, 187, 204]], rim: [136, 136, 153] },
+    },
+    water: { deep: [17, 17, 51], mid: [34, 34, 85], glint: [136, 136, 204], shore: [102, 102, 119] },
+    roofs: [[221, 221, 238], [170, 170, 187], [238, 204, 102], [136, 153, 187]],
+  },
+  ground: 'dust',
+  roadGrip: 0.82, // low gravity and loose dust: long slides
+  props: { count: 150, mix: [['rock', 6], ['crater', 6], ['building', 1]] },
+  laps: 3,
+  halfWidth: 32,
+  cornerExtra: 20,
+  lake: false,
+};
+
+const ENVS = { meadow: MEADOW, desert: DESERT, forest: FOREST, snow: SNOW, city: CITY, tropical: TROPICAL, moon: MOON };
 export type EnvId = keyof typeof ENVS;
 export const ENV_IDS = Object.keys(ENVS) as EnvId[];
 export const envGround = (id: EnvId) => ENVS[id].theme.ground[1];
@@ -222,6 +274,34 @@ const FLYOVER_CP: [number, number][] = [
   [864, 396], [966, 444], [1053, 517], [1236, 672], [1180, 742],
 ];
 
+/** Two lagoons joined by a bridge crossing: a wide eight round the island. */
+const TWIN_CP: [number, number][] = [
+  [1139, 848], [1293, 920], [1361, 770], [1395, 636], [1399, 497], [1373, 361], [1290, 254], [1157, 270], [1045, 352],
+  [945, 448], [850, 550], [755, 652], [655, 748], [543, 830], [410, 846], [327, 739], [301, 603], [305, 464],
+  [339, 330], [429, 228], [561, 252], [668, 340], [761, 443], [850, 550], [931, 750], [1026, 795],
+];
+
+/** A knot of road round a volcano: three bridges a lap. */
+const VOLCANO_CP: [number, number][] = [
+  [547, 645], [467, 495], [615, 446], [725, 409], [842, 412], [953, 448], [1051, 511], [1128, 600], [1169, 709],
+  [1151, 823], [1058, 887], [945, 863], [858, 786], [802, 684], [777, 570], [783, 453], [822, 343], [895, 253],
+  [1003, 211], [1105, 260], [1141, 369], [1118, 483], [1057, 583], [971, 662], [867, 715], [656, 848], [606, 755],
+];
+
+/** An oval with a loop of its own inside it, round a crater. */
+const LUNAR_CP: [number, number][] = [
+  [521, 696], [472, 533], [538, 480], [593, 384], [670, 305], [765, 247], [871, 219], [980, 231], [1066, 298],
+  [1089, 404], [1047, 505], [958, 568], [855, 547], [849, 442], [923, 363], [1029, 335], [1130, 373], [1185, 467],
+  [1182, 576], [1139, 678], [1070, 763], [981, 829], [878, 870], [769, 882], [587, 916], [557, 816],
+];
+
+/** A lopsided eight across the lunar sea. */
+const MARE_CP: [number, number][] = [
+  [507, 282], [368, 297], [362, 483], [349, 623], [356, 763], [418, 883], [540, 829], [631, 723], [715, 610],
+  [798, 497], [885, 387], [982, 285], [1104, 219], [1225, 261], [1288, 386], [1330, 520], [1351, 658], [1316, 789],
+  [1186, 761], [1074, 676], [969, 583], [864, 490], [706, 260], [616, 270],
+];
+
 /** A figure eight with a start straight on the right; the editor's `8` key starts from it. */
 export const EIGHT_CP: [number, number][] = [
   [1480, 520], [1480, 720], [1440, 850], [1300, 925], [1130, 905], [1010, 820], [930, 700], [880, 600], [800, 440], [700, 300],
@@ -277,7 +357,21 @@ export const TRACKS: Track[] = [
   generated('neon-alley', 'NEON ALLEY', 'city', 61),
   generated('skyline', 'SKYLINE', 'city', 83),
   bridged('flyovers', 'FLYOVERS', 'city', FLYOVER_CP),
+  generated('beach-run', 'BEACH RUN', 'tropical', 101),
+  generated('lagoon', 'LAGOON', 'tropical', 103),
+  generated('palm-bay', 'PALM BAY', 'tropical', 107),
+  bridged('twin-lagoons', 'TWIN LAGOONS', 'tropical', TWIN_CP),
+  bridged('volcano', 'VOLCANO', 'tropical', VOLCANO_CP),
+  generated('crater-rim', 'CRATER RIM', 'moon', 109),
+  generated('tranquility', 'TRANQUILITY', 'moon', 113),
+  generated('dark-side', 'DARK SIDE', 'moon', 127),
+  bridged('lunar-loop', 'LUNAR LOOP', 'moon', LUNAR_CP),
+  bridged('mare-eight', 'MARE EIGHT', 'moon', MARE_CP),
 ];
+
+/** Tracks with launch ramps besides the moon's (every moon track has them): a few in each environment. */
+const RAMP_IDS = new Set(['hills', 'dunes', 'sandstorm', 'mud-creek', 'frostbite', 'harbor', 'neon-alley', 'beach-run', 'palm-bay']);
+for (let i = 0; i < TRACKS.length; i++) if (RAMP_IDS.has(TRACKS[i].id)) TRACKS[i] = { ...TRACKS[i], ramps: true };
 
 /** Everyone gets the same track on the same (UTC) day. */
 export function dailyTrack(date = new Date()): Track {

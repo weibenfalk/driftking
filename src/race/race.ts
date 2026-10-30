@@ -4,7 +4,7 @@ import { AI_PACE, FIELD, aiDrive } from './ai';
 import { DNF_AFTER, Interp, PoseHistory, SNAP_EVERY, applyMotion, packCar } from '../net/duel';
 import type { InputMsg, InputTick, SnapMsg } from '../net/duel';
 import type { Link, Msg } from '../net/link';
-import { carFrame, checkBoost, collideCars, createDuel, createGrid, drive, updateDraft } from './car';
+import { carFrame, checkBoost, checkJump, collideCars, createDuel, createGrid, drive, fly, updateDraft } from './car';
 import type { Car, CarStats, DriveInput, Env } from './car';
 import { LapRecorder, ghostAt, ghostTimeline } from './ghost';
 import { ReplayRecorder } from './replay';
@@ -558,10 +558,13 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
   /** One car for one tick: drive it, then lap tracking, boost strips, hazards, off-track recovery and tyre marks. */
   function stepCar(c: Car, inp: DriveInput | null, dt: number) {
     c.boost = Math.max(0, c.boost - dt);
-    if (c.ai) aiDrive(c, dt, env, { player, racing: state === 'race', cars, pace: AI_PACE * (opts.paceScale ?? 1) });
+    if (c.air > 0) {
+      if (fly(c, c.ai ? null : inp, dt, env)) landed(c);
+    } else if (c.ai) aiDrive(c, dt, env, { player, racing: state === 'race', cars, pace: AI_PACE * (opts.paceScale ?? 1) });
     else drive(c, inp!, dt, env);
     trackProgress(c);
-    if (checkBoost(c, world) && human(c)) {
+    if (!c.air && !online && state === 'race' && checkJump(c, world)) tookOff(c);
+    if (!c.air && checkBoost(c, world) && human(c)) {
       popup = { n: 'BOOST!', l: 'FULL POWER', t: 30 };
       audio.tone(880, 0.12, 'square', 0.04);
       audio.tone(1320, 0.12, 'square', 0.04, 0, 0.08);
@@ -571,8 +574,29 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
       else if (c.hazard === HAZ_PUDDLE) popup = { n: 'WET!', l: 'LESS GRIP', t: 30, miss: true };
       lastHazard = c.hazard;
     }
-    if (!c.ai && state === 'race') recover(c);
-    effects(c, dt);
+    if (!c.ai && state === 'race' && !c.air) recover(c);
+    if (!c.air) effects(c, dt);
+  }
+
+  /** Off a ramp: a puff of dust and, for the player, a call-out. */
+  function tookOff(c: Car) {
+    for (let i = 0; i < 10; i++) parts.push({ x: c.x, y: c.y, vx: -c.vx * 0.3 + rnd(-0.8, 0.8), vy: -c.vy * 0.3 + rnd(-0.8, 0.8), life: 30, max: 30, kind: 'smoke' });
+    if (!human(c)) return;
+    popup = { n: 'JUMP!', l: track.env === 'MOON' ? 'LOW GRAVITY' : 'AIR TIME', t: 40 };
+    audio.tone(300, 0.25, 'sine', 0.05);
+    audio.tone(600, 0.35, 'sine', 0.04, 0, 0.12);
+  }
+
+  /** Back on the ground: a ring of dust, a thump and a little shake. */
+  function landed(c: Car) {
+    for (let i = 0; i < 18; i++) {
+      const a = (i / 18) * Math.PI * 2;
+      parts.push({ x: c.x, y: c.y, vx: Math.cos(a) * rnd(0.6, 1.6), vy: Math.sin(a) * rnd(0.6, 1.6), life: 34, max: 34, kind: 'smoke' });
+    }
+    if (!human(c)) return;
+    shake = Math.max(shake, 2.5);
+    audio.noise(0.18, 0.1);
+    audio.tone(110, 0.16, 'sine', 0.07);
   }
 
   /* ---- online duel ---- */

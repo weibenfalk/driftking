@@ -19,7 +19,7 @@ interface Props {
 
 const ROW_TOP = 36;
 const ROW_H = 11;
-const ITEMS = ['SOUND', 'MUSIC', 'SONG', 'VOLUME', 'DIFFICULTY', 'WEATHER', 'TIME OF DAY', 'SCANLINES', 'EXPORT SAVE', 'IMPORT SAVE', 'ERASE SAVE'] as const;
+const ITEMS = ['SOUND', 'MUSIC', 'SONG', 'VOLUME', 'DIFFICULTY', 'WEATHER', 'TIME OF DAY', 'SCANLINES', 'EXPORT SAVE', 'IMPORT SAVE', 'RESET PROGRESS'] as const;
 const VALUES = 8;
 const SONG_CHOICES = [ALL, ...SONGS.map((s) => s.id)]; // the first seven rows are values you change; the rest run an action
 
@@ -62,11 +62,11 @@ export default function Settings({ settings, save, onChange, onSave, onBack }: P
     } else if (i === 10) {
       if (!confirm) {
         setConfirm(true);
-        setMsg('PRESS ENTER AGAIN TO ERASE EVERYTHING');
+        setMsg('PRESS ENTER AGAIN TO ERASE ALL MEDALS, MONEY AND CARS');
       } else {
         onSave(emptySave());
         setConfirm(false);
-        setMsg('SAVE ERASED');
+        setMsg('PROGRESS RESET');
       }
     }
   };

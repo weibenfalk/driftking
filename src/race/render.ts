@@ -1,6 +1,6 @@
 import { drawText, textWidth } from '../engine/pixelfont';
 import { TAU, formatTime } from '../engine/util';
-import { GHOST_LOOK, ROT, SPRITE, getLooks } from './car';
+import { AIR_PEAK, GHOST_LOOK, ROT, SPRITE, airHeight, getLooks } from './car';
 import type { Car } from './car';
 import type { Conditions } from './conditions';
 import type { GhostPose } from './ghost';
@@ -366,6 +366,17 @@ export function createRenderer(ctx: CanvasRenderingContext2D, world: World) {
       const L = looks[c.look];
       const x = Math.round(c.x - ox) - SPRITE / 2;
       const y = Math.round(c.y - oy) - SPRITE / 2;
+      const h = airHeight(c);
+      if (h > 0) {
+        // in the air: the car grows a little and lifts off its shadow, which stays on the ground and fades
+        const k = 1 + (h / AIR_PEAK) * 0.35;
+        const size = Math.round(SPRITE * k);
+        ctx.globalAlpha = 0.3 - (h / AIR_PEAK) * 0.12;
+        ctx.drawImage(L.shadows[fr], x + 2, y + 2);
+        ctx.globalAlpha = 1;
+        ctx.drawImage(L.frames[fr], Math.round(c.x - ox - size / 2), Math.round(c.y - oy - size / 2 - h), size, size);
+        return;
+      }
       ctx.globalAlpha = 0.35;
       ctx.drawImage(L.shadows[fr], x + 2, y + 2);
       ctx.globalAlpha = 1;

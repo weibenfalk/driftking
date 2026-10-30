@@ -8,10 +8,10 @@ export * from './surfaces';
 export type { BoostPad, Tree } from './paint';
 
 /** Off-road surface. Each one is a different mix of top speed, drag and grip (see `GROUNDS` in car.ts). */
-export type Ground = 'grass' | 'sand' | 'snow' | 'mud';
+export type Ground = 'grass' | 'sand' | 'snow' | 'mud' | 'dust';
 
 /** Kinds of scenery that can be scattered beside the road. */
-export type PropStyle = 'tree' | 'pine' | 'bush' | 'cactus' | 'rock' | 'building';
+export type PropStyle = 'tree' | 'pine' | 'bush' | 'cactus' | 'rock' | 'building' | 'palm' | 'crater';
 
 /** Four-tone shading ramp (dark to light) and an outline colour for a kind of prop. */
 export interface PropPalette {
@@ -20,7 +20,7 @@ export interface PropPalette {
 }
 
 /** The look of the ground texture. */
-export type Detail = 'meadow' | 'sand' | 'forest' | 'snow' | 'city';
+export type Detail = 'meadow' | 'sand' | 'forest' | 'snow' | 'city' | 'tropical' | 'moon';
 
 /** Colours that make a track look like somewhere. Everything is snapped to the Amiga's 12-bit palette when painted. */
 export interface Theme {
@@ -63,6 +63,8 @@ export interface Track {
   pointExtra?: number[];
   /** The road may cross itself: the later stretch of each crossing becomes a bridge (see `findCrossings`). */
   bridges?: boolean;
+  /** Launch ramps on the straights (always on the moon): see `placeJumps` in paint.ts. */
+  ramps?: boolean;
   props: Props;
   /** Off-road surface. */
   ground: Ground;
@@ -92,6 +94,8 @@ export interface World {
   surf: Uint8Array; // GRASS, ASPHALT, CURB, SOLID or WATER
   trees: Tree[];
   boosts: BoostPad[];
+  /** Launch ramps (moon): a car that drives over one at speed flies. */
+  jumps: BoostPad[];
   /** Bounding box of the lake, so the renderer only animates water where there is some. */
   water: { x0: number; y0: number; x1: number; y1: number } | null;
   hazard: Uint8Array; // HAZ_* per pixel: puddles and oil on the road
@@ -416,5 +420,5 @@ export function buildWorld(track: Track): World {
   const deckLvl = found && typeof found !== 'string' ? found.lvl : new Uint8Array(N);
   const lvl = found && typeof found !== 'string' ? found.zlvl : deckLvl;
   const p = paintWorld(track, S, hw, turnAhead(S), deckLvl);
-  return { track, w: track.width, h: track.height, S, N, aiSpd, hw, base: p.img, surf: p.surf, trees: p.trees, boosts: p.boosts, water: p.water, hazard: p.hazard, lvl, deck: p.deck, deckImg: p.deckImg, mini: p.mini };
+  return { track, w: track.width, h: track.height, S, N, aiSpd, hw, base: p.img, surf: p.surf, trees: p.trees, boosts: p.boosts, jumps: p.jumps, water: p.water, hazard: p.hazard, lvl, deck: p.deck, deckImg: p.deckImg, mini: p.mini };
 }

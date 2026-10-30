@@ -11,6 +11,7 @@ export const GROUNDS: Record<Ground, { maxF: number; drag: number; grip: number;
   sand: { maxF: 1.9, drag: 0.962, grip: 0.86, slipGrip: 0.93 },
   snow: { maxF: 2.6, drag: 0.978, grip: 0.9, slipGrip: 0.955 },
   mud: { maxF: 1.7, drag: 0.955, grip: 0.82, slipGrip: 0.9 },
+  dust: { maxF: 2.1, drag: 0.968, grip: 0.8, slipGrip: 0.9 }, // moon dust: loose and slippery, but it doesn't slow you much
 };
 
 /** How a car differs from the baseline (all 1). Each is a multiplier on the matching bit of physics. */
@@ -75,6 +76,9 @@ export interface Car {
   boost: number;
   /** HAZ_* under the car. */
   hazard: number;
+  /** Frames of flight left (a jump), and how long the flight is in all. */
+  air: number;
+  airMax: number;
 }
 
 export interface DriveInput {
@@ -310,6 +314,8 @@ function spawn(world: World, x: number, y: number, look: number, persona: Person
     draft: 0,
     boost: 0,
     hazard: HAZ_NONE,
+    air: 0,
+    airMax: 1,
   };
 }
 
@@ -437,6 +443,68 @@ export function moveCar(c: Car, dt: number, env: Env) {
   }
 }
 
+/** How high a jump reaches in pixels: low gravity, so it is high and slow. */
+export const AIR_PEAK = 15;
+
+/** Height above the ground for a car in the air (0 on the ground): a parabola over the flight. */
+export function airHeight(c: Pick<Car, 'air' | 'airMax'>) {
+  if (c.air <= 0) return 0;
+  const t = 1 - c.air / c.airMax;
+  return AIR_PEAK * Math.pow(c.airMax / 50, 2) * 4 * t * (1 - t); // (a shorter flight is a lower one)
+}
+
+/** Driving over a launch ramp at speed sends the car flying. Returns true when it took off. */
+export function checkJump(c: Car, world: World): boolean {
+  if (c.air > 0 || c.z) return false;
+  const sp = Math.hypot(c.vx, c.vy);
+  if (sp < 1.6) return false;
+  for (const p of world.jumps) {
+    const dx = c.x - p.x;
+    const dy = c.y - p.y;
+    const along = dx * p.tx + dy * p.ty;
+    const across = -dx * p.ty + dy * p.tx;
+    if (Math.abs(along) < 12 && Math.abs(across) < 16 && (c.vx * p.tx + c.vy * p.ty) / sp > 0.7) {
+      // most of a second at full speed (about 220 px), but never further than the straight it is launched along
+      // (off the moon gravity is normal, so the hop is shorter and lower)
+      const g = world.track.env === 'MOON' ? 1 : 0.62;
+      const frames = Math.min(Math.round((26 + 24 * Math.min(1, sp / 4.4)) * g), Math.floor(((p.run ?? 200) * 0.6) / sp));
+      if (frames < 14) return false;
+      c.airMax = c.air = frames;
+      c.vx *= 1.03;
+      c.vy *= 1.03;
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * A car in the air has no tyres to bite with: it keeps its velocity and the steering only turns the nose, so a jump
+ * can end in a slide. No walls, trees or cars are touched in flight. Returns true on the frame it lands.
+ */
+export function fly(c: Car, inp: DriveInput | null, dt: number, env: Env): boolean {
+  const { world } = env;
+  c.steer += ((inp?.steer ?? 0) - c.steer) * Math.min(1, 0.22 * dt);
+  c.a += c.steer * 0.034 * dt;
+  c.x = clamp(c.x + c.vx * dt, 8, world.w - 8);
+  c.y = clamp(c.y + c.vy * dt, 8, world.h - 8);
+  c.grass = false;
+  c.hazard = 0;
+  c.slide = false;
+  const fx = Math.cos(c.a);
+  const fy = Math.sin(c.a);
+  c.vf = c.vx * fx + c.vy * fy;
+  c.vr = -c.vx * fy + c.vy * fx;
+  c.air -= dt;
+  if (c.air > 0) return false;
+  c.air = 0;
+  if (Math.abs(c.vr) > 0.7) {
+    c.slide = true;
+    c.sl = 1;
+  }
+  return true;
+}
+
 /** Frames a boost strip lasts. */
 export const BOOST_FRAMES = 70;
 
@@ -485,7 +553,7 @@ export function collideCars(cars: Car[], onHit: (a: Car, b: Car, impact: number)
     for (let j = i + 1; j < cars.length; j++) {
       const a = cars[i];
       const b = cars[j];
-      if (a.z !== b.z) continue;
+      if (a.z !== b.z || a.air > 0 || b.air > 0) continue;
       const dx = b.x - a.x;
       const dy = b.y - a.y;
       const d = Math.hypot(dx, dy);

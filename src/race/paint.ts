@@ -1,6 +1,6 @@
 import { band, hash2, makeNoise, quantize, ramp, shade } from '../engine/pal';
 import type { RGB } from '../engine/pal';
-import { TAU, clamp, mulberry32 } from '../engine/util';
+import { TAU, clamp, mulberry32, wrapAngle } from '../engine/util';
 import { ASPHALT, CURB, GRASS, HAZ_OIL, HAZ_PUDDLE, PARAPET, SOLID, WATER } from './surfaces';
 import type { PropPalette, PropStyle, Sample, Track } from './track';
 
@@ -19,6 +19,8 @@ export interface BoostPad {
   y: number;
   tx: number;
   ty: number;
+  /** Launch ramps: how many pixels of straight road lie ahead of it, which caps how far a jump can carry. */
+  run?: number;
 }
 
 export interface Painted {
@@ -27,6 +29,7 @@ export interface Painted {
   hazard: Uint8Array;
   trees: Tree[];
   boosts: BoostPad[];
+  jumps: BoostPad[];
   water: { x0: number; y0: number; x1: number; y1: number } | null;
   mini: HTMLCanvasElement;
   deck: Uint8Array | null;
@@ -179,6 +182,12 @@ function paintTerrain(track: Track, S: Sample[], hw: Float32Array, noise: Noise,
       surf[p] = GRASS;
     } else if (cls === ASPHALT) {
       c = roadColor(track);
+      if (theme.detail === 'moon') {
+        // a track of packed dust: speckled, with the odd lighter grain and darker pit
+        const hs = hash2(x, y, 11) % 23;
+        if (hs === 0) c = theme.road.light;
+        else if (hs < 4) c = theme.road.dark;
+      }
       surf[p] = ASPHALT;
     } else {
       c = theme.curb[cls === CURB ? 0 : 1];
@@ -200,6 +209,7 @@ function paintGroundDetail(px: Pix, track: Track) {
     if (px.at(x, y) === GRASS) px.put(x, y, c);
   };
   const FLOWERS: RGB[] = [[255, 255, 255], [255, 221, 51], [255, 136, 170], [204, 153, 255]];
+  const HIBISCUS: RGB[] = [[255, 51, 85], [255, 153, 34], [255, 238, 136]];
   for (let y = 2; y < H - 2; y++)
     for (let x = 2; x < W - 2; x++) {
       if (px.surf[y * W + x] !== GRASS) continue;
@@ -234,6 +244,32 @@ function paintGroundDetail(px: Pix, track: Track) {
         if (h % 1600 === 0) {
           dot(x, y, ground[0]);
           dot(x + 1, y, ground[0]);
+        }
+      } else if (detail === 'tropical') {
+        if (h % 900 === 0) {
+          // fallen fronds
+          dot(x, y, ground[0]);
+          dot(x + 1, y, ground[0]);
+          dot(x + 2, y + 1, ground[0]);
+        } else if (h % 2600 === 3) {
+          const f = HIBISCUS[(h >>> 8) % 3];
+          dot(x, y, f);
+          dot(x + 1, y, f);
+          dot(x, y + 1, [17, 102, 34]);
+        }
+      } else if (detail === 'moon') {
+        if (h % 700 === 0) {
+          // a pebble with a shadow
+          dot(x, y, ground[3]);
+          dot(x + 1, y, ground[2]);
+          dot(x + 1, y + 1, ground[0]);
+        } else if (h % 5200 === 4) {
+          // a small crater: dark floor, bright rim on the far side
+          for (let a = -3; a <= 3; a++)
+            for (let b = -3; b <= 3; b++) {
+              const e = a * a + b * b;
+              if (e <= 9) dot(x + a, y + b, e <= 4 ? ground[0] : a + b > 0 ? ground[3] : ground[1]);
+            }
         }
       } else if (detail === 'city') {
         if (h % 2200 === 0) {
@@ -278,6 +314,22 @@ function paintMarkings(px: Pix, S: Sample[], hw: Float32Array, track: Track, lvl
   const { road } = track.theme;
   const N = S.length;
   const onRoad = (x: number, y: number) => px.at(x, y) === ASPHALT;
+  if (track.theme.detail === 'moon') {
+    // no paint on a dust track, only the ruts of the wheels that have been over it: two broken dark lines
+    for (let i = 0; i < N; i++) {
+      if (lvl[i]) continue;
+      const a = S[i];
+      for (let k = 0; k < 4; k++) {
+        for (const side of [-1, 1]) {
+          const u = side * hw[i] * 0.34 + Math.sin(i * 0.31 + side) * 1.2;
+          const x = a.x + a.nx * u + a.tx * k;
+          const y = a.y + a.ny * u + a.ty * k;
+          if (hash2(Math.floor(x), Math.floor(y), 5) % 4 !== 0 && onRoad(x, y)) px.put(x, y, road.dark);
+        }
+      }
+    }
+    return;
+  }
   for (let i = 0; i < N; i++) {
     if (lvl[i]) continue;
     const a = S[i];
@@ -433,6 +485,37 @@ function paintProp(px: Pix, style: PropStyle, x: number, y: number, r: number, p
   } else if (style === 'cactus') {
     const edge: Edge = (dx, dy) => Math.max(Math.min(1.6 - Math.abs(dx), r + 1 - Math.abs(dy)) / 1.6, Math.min(1.4 - Math.abs(dy + 1), r * 0.9 - Math.abs(dx)) / 1.4);
     paintBlob(px, x, y, r, edge, pal, rng, r + 2, true);
+  } else if (style === 'palm') {
+    // eight fronds radiating from the crown, each narrowing to a tip with a pale midrib; only the trunk is solid
+    const n = 8;
+    for (let dy = -r; dy <= r; dy++)
+      for (let dx = -r; dx <= r; dx++) {
+        const d = Math.hypot(dx, dy);
+        if (d > r || d < 0.5) continue;
+        const a = Math.atan2(dy, dx);
+        let best = 9;
+        for (let k = 0; k < n; k++) best = Math.min(best, Math.abs(wrapAngle(a - ph - (k * TAU) / n)));
+        const width = 0.16 + 0.42 * Math.pow(1 - d / r, 0.7);
+        if (best > width || px.at(x + dx, y + dy) !== GRASS) continue;
+        const light = clamp((-dx - dy) / (1.4 * r), -1, 1) * 0.5 + 0.5;
+        px.put(x + dx, y + dy, best < 0.07 ? pal.ramp[3] : best > width * 0.8 || d > r * 0.9 ? pal.rim : band(pal.ramp, clamp(light * 0.8 + 0.1, 0, 0.999) * 3), undefined);
+      }
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) px.put(x + dx, y + dy, dx + dy < 0 ? [153, 102, 51] : [102, 68, 34], SOLID);
+  } else if (style === 'crater') {
+    // a shallow bowl with a pale rim: the wall away from the light (top left) is dark, the one facing it bright
+    for (let dy = -r - 1; dy <= r + 1; dy++)
+      for (let dx = -r - 1; dx <= r + 1; dx++) {
+        const d = Math.hypot(dx, dy) / r;
+        const wob = 1 + 0.08 * Math.sin(3 * Math.atan2(dy, dx) + ph);
+        const e = d / wob;
+        if (e > 1 || px.at(x + dx, y + dy) !== GRASS) continue;
+        const up = clamp((-dx - dy) / (1.4 * r), -1, 1);
+        let c: RGB;
+        if (e > 0.86) c = pal.rim;
+        else if (e > 0.55) c = up > 0 ? pal.ramp[0] : pal.ramp[3 - Math.min(1, Math.round((1 + up) * 1.2 - 0.2))];
+        else c = pal.ramp[1];
+        px.put(x + dx, y + dy, c);
+      }
   }
 }
 
@@ -473,7 +556,7 @@ function paintBuilding(px: Pix, x: number, y: number, hw: number, hh: number, ro
   }
 }
 
-const SIZE: Record<PropStyle, [number, number]> = { tree: [6, 10], pine: [6, 10], bush: [3, 5], cactus: [3, 5], rock: [3, 7], building: [9, 20] };
+const SIZE: Record<PropStyle, [number, number]> = { tree: [6, 10], pine: [6, 10], bush: [3, 5], cactus: [3, 5], rock: [3, 7], building: [9, 20], palm: [9, 13], crater: [8, 22] };
 
 function plantProps(px: Pix, track: Track, rng: () => number): Tree[] {
   const { width: W, height: H, theme, props } = track;
@@ -508,7 +591,7 @@ function plantProps(px: Pix, track: Track, rng: () => number): Tree[] {
     const r = Math.round(lo + rng() * (hi - lo));
     const x = Math.round(10 + rng() * (W - 20));
     const y = Math.round(10 + rng() * (H - 20));
-    const margin = style === 'building' ? r + 14 : r + (style === 'bush' ? 8 : dense ? 10 : 14);
+    const margin = style === 'building' ? r + 14 : style === 'crater' ? r + 4 : r + (style === 'bush' ? 8 : dense ? 10 : 14);
     if (!isClear(x, y, margin, r + 2)) continue;
     if (placed.some((p) => Math.hypot(p.x - x, p.y - y) < p.r + r + (style === 'building' ? 10 : dense ? 1 : 5))) continue;
     placed.push({ x, y, r });
@@ -522,7 +605,8 @@ function plantProps(px: Pix, track: Track, rng: () => number): Tree[] {
     const pal = theme.props[style] ?? theme.props.tree;
     if (!pal) continue;
     paintProp(px, style, x, y, r, pal, rng);
-    if (style !== 'bush') trees.push({ x, y, r });
+    if (style === 'palm') trees.push({ x, y, r: 2 }); // (only the trunk is solid)
+    else if (style !== 'bush' && style !== 'crater') trees.push({ x, y, r });
   }
   return trees;
 }
@@ -658,6 +742,38 @@ function placeBoosts(S: Sample[], turn: Float32Array, lvl: Uint8Array): { pad: B
   return out;
 }
 
+/** Launch ramps for the moon: on long straights, a few a lap, clear of the boost strips, the start and any bridge. */
+function placeJumps(S: Sample[], turn: Float32Array, lvl: Uint8Array, avoid: number[]): BoostPad[] {
+  const N = S.length;
+  const out: { pad: BoostPad; idx: number }[] = [];
+  const idxs = [...avoid];
+  for (let i = 80; i < N - 60 && out.length < 3; i++) {
+    if (turn[i] > 0.26 || lvl[i]) continue;
+    let n = 0;
+    while (n < 70 && i + n < N - 40 && turn[i + n] <= 0.26 && !lvl[i + n]) n++;
+    if (n < 32 || idxs.some((a) => Math.min(Math.abs(a - i), N - Math.abs(a - i)) < N / 16)) continue; // it needs a straight to land on
+    const s = S[i + 14];
+    out.push({ pad: { x: s.x, y: s.y, tx: s.tx, ty: s.ty, run: (n - 14) * 4 }, idx: i });
+    idxs.push(i);
+    i += 20;
+  }
+  return out.map((o) => o.pad);
+}
+
+/** A wedge of a ramp seen from above: dark at the start rising to bright at the lip, with orange chevrons and rim. */
+function paintJump(px: Pix, p: BoostPad) {
+  const nx = -p.ty;
+  const ny = p.tx;
+  for (let u = -15; u <= 15; u += 0.5)
+    for (let v = -13; v <= 13; v += 0.5) {
+      const t = (v + 13) / 26;
+      let c: RGB = [Math.round(76 + 150 * t), Math.round(74 + 150 * t), Math.round(92 + 150 * t)];
+      if (Math.abs(u) >= 14.2 || v <= -12.5 || v >= 12.5) c = [255, 136, 34];
+      else if ((((v - Math.abs(u) * 0.6 + 100) % 7) + 7) % 7 < 1.6) c = [255, 136, 34];
+      px.put(p.x + nx * u + p.tx * v, p.y + ny * u + p.ty * v, c);
+    }
+}
+
 function paintBoost(px: Pix, p: BoostPad) {
   const nx = -p.ty;
   const ny = p.tx;
@@ -673,6 +789,7 @@ function paintBoost(px: Pix, p: BoostPad) {
 
 /** Puddles (less grip) and oil (almost none) scattered on the asphalt. Same track, same spots. */
 function paintHazards(px: Pix, hazard: Uint8Array, track: Track, S: Sample[], hw: Float32Array, avoid: number[], lvl: Uint8Array) {
+  if (track.env === 'MOON') return; // no water, no oil: just loose dust
   const { width: W, height: H } = track;
   const N = S.length;
   let h = 2166136261;
@@ -850,10 +967,13 @@ export function paintWorld(track: Track, S: Sample[], hw: Float32Array, turn: Fl
   const hazard = new Uint8Array(track.width * track.height);
   paintHazards(px, hazard, track, S, hw, boosts.map((b) => b.idx), lvl);
   const water = track.lake ? paintLake(px, track) : null;
-  paintAds(px, S, hw, turn);
-  const trees = [...plantTyres(px, S, hw, turn), ...plantProps(px, track, rng)];
+  const jumps = track.env === 'MOON' || track.ramps ? placeJumps(S, turn, lvl, boosts.map((b) => b.idx)) : [];
+  for (const j of jumps) paintJump(px, j);
+  const rough = track.env === 'MOON'; // no hoardings and no tyre stacks out on the dust
+  if (!rough) paintAds(px, S, hw, turn);
+  const trees = [...(rough ? [] : plantTyres(px, S, hw, turn)), ...plantProps(px, track, rng)];
   quantize(px.d);
   if (bridged) for (let k = 0; k < px.surf.length; k++) if (px.surf[k] === UNDER) px.surf[k] = GRASS;
   const deck = bridged ? paintDeck(track, S, hw, lvl) : null;
-  return { img: px.img, surf: px.surf, hazard, trees, boosts: boosts.map((b) => b.pad), water, mini: makeMinimap(S, track), deck: deck?.deck ?? null, deckImg: deck?.deckImg ?? null };
+  return { img: px.img, surf: px.surf, hazard, trees, boosts: boosts.map((b) => b.pad), jumps, water, mini: makeMinimap(S, track), deck: deck?.deck ?? null, deckImg: deck?.deckImg ?? null };
 }

@@ -72,6 +72,11 @@ export function thumb(track: Track, w: number, h: number): Thumb {
       }
   }
 
+  // a road close in tone to the ground (moon, tropics) would vanish at this size: use its darker tone instead
+  const lum = (c: ArrayLike<number>) => c[0] * 0.3 + c[1] * 0.59 + c[2] * 0.11;
+  const groundLum = theme.ground.reduce((a, c) => a + lum(c), 0) / theme.ground.length;
+  const roadColor = Math.abs(lum(theme.road.base) - groundLum) < 40 ? theme.road.dark : theme.road.base;
+
   const S = line(track.cp);
   const hw = trackWidths(track, S, track.cp);
   const half = (i: number) => Math.max(1, Math.round(hw[i] * sc));
@@ -108,7 +113,7 @@ export function thumb(track: Track, w: number, h: number): Thumb {
   }
   for (let i = 0; i < S.length; i++) {
     const [cx, cy] = at(i);
-    square(cx, cy, half(i), (x, y) => set(x, y, theme.road.base));
+    square(cx, cy, half(i), (x, y) => set(x, y, roadColor));
   }
   if (theme.road.marks)
     for (let i = 0; i < S.length; i++) if (half(i) >= 2 && Math.floor(i / 4) % 2 === 0) set(...at(i), theme.road.center);

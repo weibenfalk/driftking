@@ -18,6 +18,11 @@ const MOODS: Record<string, Conditions> = {
   canyon: { weather: 'sand', time: 'day' },
   sandstorm: { weather: 'sand', time: 'day' },
   'oasis-eight': { weather: 'sand', time: 'dusk' },
+  'palm-bay': { weather: 'clear', time: 'day' },
+  lagoon: { weather: 'rain', time: 'day' },
+  volcano: { weather: 'clear', time: 'dusk' },
+  'dark-side': { weather: 'clear', time: 'night' },
+  tranquility: { weather: 'clear', time: 'day' },
   meadow: { weather: 'clear', time: 'day' },
 };
 
@@ -29,8 +34,9 @@ export function autoConditions(track: Track): Conditions {
   h >>>= 0;
   const r1 = (h % 100) / 100;
   const r2 = ((h >>> 8) % 100) / 100;
-  const weather = track.env === 'SNOW' ? 'snow' : track.env === 'DESERT' ? 'clear' : r1 < 0.28 ? 'rain' : 'clear';
-  const time = track.env === 'CITY' ? (r2 < 0.6 ? 'night' : 'dusk') : r2 < 0.5 ? 'day' : r2 < 0.78 ? 'dusk' : 'night';
+  // tropical downpours are common, the moon has no weather
+  const weather = track.env === 'SNOW' ? 'snow' : track.env === 'DESERT' || track.env === 'MOON' ? 'clear' : r1 < (track.env === 'TROPICAL' ? 0.45 : 0.28) ? 'rain' : 'clear';
+  const time = track.env === 'CITY' ? (r2 < 0.6 ? 'night' : 'dusk') : track.env === 'MOON' ? (r2 < 0.7 ? 'day' : 'night') : r2 < 0.5 ? 'day' : r2 < 0.78 ? 'dusk' : 'night';
   return { weather, time };
 }
 
