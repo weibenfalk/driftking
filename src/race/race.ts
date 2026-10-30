@@ -294,6 +294,22 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
 
   // Water or straying too far from the road sends a car back to its last road position, standing still.
   const safeIdx = new Map<Car, number>();
+
+  /** Stands the car still in the middle of the road at centre-line sample `i`, pointing the way the track runs. */
+  function placeOnRoad(c: Car, i: number) {
+    const s = S[i];
+    c.x = s.x;
+    c.y = s.y;
+    c.a = Math.atan2(s.ty, s.tx);
+    c.vx = c.vy = c.vf = c.vr = 0;
+    c.steer = 0;
+    c.slide = false;
+    c.sl = 0;
+    c.idx = i;
+    c.z = world.lvl[i];
+    safeIdx.set(c, i);
+  }
+
   function recover(c: Car) {
     const sf = surfAt(world, c.x, c.y, c.z);
     if (sf === ASPHALT || sf === CURB) {
@@ -304,15 +320,7 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
     const g = S[gi];
     const far = Math.hypot(c.x - g.x, c.y - g.y) > hw[gi] + OFFROAD;
     if (sf !== WATER && !far) return;
-    const s = S[safeIdx.get(c) ?? c.idx];
-    c.x = s.x;
-    c.y = s.y;
-    c.a = Math.atan2(s.ty, s.tx);
-    c.vx = c.vy = c.vf = c.vr = 0;
-    c.steer = 0;
-    c.slide = false;
-    c.sl = 0;
-    c.idx = safeIdx.get(c) ?? c.idx;
+    placeOnRoad(c, safeIdx.get(c) ?? c.idx);
     if (human(c)) {
       lapValid = false;
       loseChain();
@@ -323,6 +331,43 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
       audio.noise(0.3, 0.08);
     }
     for (let i = 0; i < 14; i++) parts.push({ x: c.x, y: c.y, vx: rnd(-1, 1), vy: rnd(-1, 1), life: 25, max: 25, kind: 'dirt' });
+  }
+
+  // the player's own help: going the wrong way round, standing still, and putting the car back on the road by hand
+  let wrongT = 0;
+  let stuckT = 0;
+  let resetHeld = false;
+  let lastRespawn = -9;
+
+  /** The respawn key: back to the middle of the road where the car is, standing still, for the usual two seconds. */
+  function respawn() {
+    if (online || state !== 'race' || mineDone || countT < COUNT || raceT - lastRespawn < 1) return;
+    lastRespawn = raceT;
+    placeOnRoad(player, player.idx);
+    lapValid = false;
+    loseChain();
+    if (!attack) raceT += 2;
+    banner = { a: 'RESPAWN', b: attack ? '' : '+2 SECONDS', t: 40 };
+    audio.noise(0.2, 0.06);
+    for (let i = 0; i < 14; i++) parts.push({ x: player.x, y: player.y, vx: rnd(-1, 1), vy: rnd(-1, 1), life: 25, max: 25, kind: 'dirt' });
+    wrongT = stuckT = 0;
+  }
+
+  function playerHelp(dt: number) {
+    const reset = input.down('reset');
+    const tapped = input.pressed('reset'); // (a key can go down and up between two frames)
+    if (tapped || (reset && !resetHeld)) respawn();
+    resetHeld = reset;
+    if (state !== 'race' || mineDone) {
+      wrongT = stuckT = 0;
+      return;
+    }
+    const sp = Math.hypot(player.vx, player.vy);
+    const s = S[player.idx];
+    const along = sp > 0.01 ? (player.vx * s.tx + player.vy * s.ty) / sp : 0;
+    // judged by where the car is travelling, not where it points, so a spin doesn't set it off
+    wrongT = !driftMode && sp > 1 && along < -0.35 ? wrongT + dt : Math.max(0, wrongT - 2 * dt);
+    stuckT = sp < 0.25 && (input.down('up') || input.down('down')) && raceT > 3 ? stuckT + dt : 0;
   }
 
   function crossed(c: Car, dir: number) {
@@ -653,6 +698,7 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
           goShow = 40;
         } else if (n > 0) audio.tone(440, 0.12, 'square', 0.05);
       }
+      input.clearPresses();
       engineSound(input.down('up') ? 1.6 : 0);
       status();
       sendSnap();
@@ -774,6 +820,7 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
     camX = clamp(camX, SW / 2, world.w - SW / 2);
     camY = clamp(camY, SH / 2, world.h - SH / 2);
 
+    playerHelp(dt);
     engineSound();
     if (state === 'race') api.setScore(Math.round(raceT * 100));
     status();
@@ -799,6 +846,8 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
       camY,
       shake,
       lights: countT < COUNT || goShow > 0 ? lamps : undefined,
+      wrongWay: wrongT > 24 ? { ang: Math.atan2(S[player.idx].ty, S[player.idx].tx) } : undefined,
+      hint: stuckT > 120 && !online ? 'PRESS R TO RESPAWN' : countT < COUNT && !online ? 'R RESPAWNS THE CAR' : undefined,
       flag: flagT >= 0 ? flagT : undefined,
       raceT,
       popup,

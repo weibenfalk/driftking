@@ -1,0 +1,111 @@
+<!doctype html>
+<!--
+  The share image (public/og.png, 1200x630). A scene drawn with the game's own code: the crossing on FIGURE EIGHT with
+  cars on the bridge and on the road under it, the title logo and scanlines. To make it again:
+    npm run dev, then open http://localhost:5173/tools/og.html in a window of exactly 1200x630 and save a screenshot, or
+    chrome --headless=new --window-size=1200,630 --virtual-time-budget=4000 --screenshot=public/og.png http://localhost:5173/tools/og.html
+-->
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; background: #001; overflow: hidden; width: 1200px; height: 630px; }
+      canvas { display: block; width: 1200px; height: 632px; image-rendering: pixelated; }
+      .scan { position: fixed; inset: 0; pointer-events: none; background: repeating-linear-gradient(to bottom, transparent 0 3px, rgba(0, 0, 0, 0.22) 3px 4px); }
+    </style>
+  </head>
+  <body>
+    <canvas id="c" width="300" height="158"></canvas>
+    <div class="scan"></div>
+    <script type="module">
+      import { TRACKS } from '/src/race/tracks.ts';
+      import { getWorld } from '/src/race/track.ts';
+      import { ROT, SPRITE, getLooks } from '/src/race/car.ts';
+      import { drawText } from '/src/engine/pixelfont.ts';
+      import { logo, bars } from '/src/ui/kit.ts';
+
+      const TAU = Math.PI * 2;
+      const W = 300, H = 158;
+      const ctx = document.getElementById('c').getContext('2d');
+      ctx.imageSmoothingEnabled = false;
+
+      const world = getWorld(TRACKS.find((t) => t.id === 'figure-eight'));
+      const base = document.createElement('canvas');
+      base.width = world.w;
+      base.height = world.h;
+      base.getContext('2d').putImageData(world.base, 0, 0);
+
+      // the crossing is where the later stretch (the bridge) comes closest to the earlier one
+      const { S, N, lvl } = world;
+      const bridge = [...lvl].map((v, i) => (v ? i : -1)).filter((i) => i >= 0);
+      const mid = S[bridge[Math.floor(bridge.length / 2)]];
+      const ox = Math.round(mid.x - W / 2 + 8);
+      const oy = Math.round(mid.y - 108);
+      ctx.drawImage(base, ox, oy, W, H, 0, 0, W, H);
+
+      const looks = getLooks();
+      const car = (look, x, y, a, smoke) => {
+        const fr = ((Math.round((a / TAU) * ROT) % ROT) + ROT) % ROT;
+        const px = Math.round(x - ox) - SPRITE / 2;
+        const py = Math.round(y - oy) - SPRITE / 2;
+        if (smoke) {
+          for (let k = 0; k < 22; k++) {
+            const back = 7 + k * 3;
+            const sx = x - Math.cos(a) * back + Math.sin(k * 5) * 3 - ox;
+            const sy = y - Math.sin(a) * back + Math.cos(k * 7) * 3 - oy;
+            const r = 2 + Math.floor(k / 4);
+            ctx.globalAlpha = Math.max(0.2, 0.9 - k * 0.035);
+            ctx.fillStyle = k % 3 ? '#f2f2f8' : '#c4c6d4';
+            ctx.fillRect(Math.round(sx - r / 2), Math.round(sy - r / 2), r, r);
+          }
+          ctx.globalAlpha = 1;
+        }
+        ctx.globalAlpha = 0.35;
+        ctx.drawImage(looks[look].shadows[fr], px + 2, py + 2);
+        ctx.globalAlpha = 1;
+        ctx.drawImage(looks[look].frames[fr], px, py);
+      };
+      const at = (i, lat, look, slip, smoke) => {
+        const s = S[(i + N) % N];
+        car(look, s.x + s.nx * lat, s.y + s.ny * lat, Math.atan2(s.ty, s.tx) + slip, smoke);
+      };
+
+      // find the sample on the road below that is nearest the middle of the bridge
+      let under = 0, best = 1e9;
+      for (let i = 0; i < N; i++) {
+        if (lvl[i]) continue;
+        const d = Math.hypot(S[i].x - mid.x, S[i].y - mid.y);
+        if (d < best) { best = d; under = i; }
+      }
+      const b0 = bridge[Math.floor(bridge.length / 2)];
+
+      // cars on the ground (the road below), then the bridge, then the cars on the bridge
+      at(under - 17, -9, 6, 0, false);
+      at(under - 6, 11, 7, 0.1, false);
+      at(under + 17, -4, 1, 0.4, true); // coming out from under the bridge, sliding
+      at(under + 30, 10, 8, 0, false);
+      if (world.deckImg) ctx.drawImage(world.deckImg, ox, oy, W, H, 0, 0, W, H);
+      at(b0 - 17, 9, 4, 0, false);
+      at(b0 + 3, -5, 0, -0.6, true); // the hero: drifting over the bridge
+      at(b0 + 19, 8, 2, 0.05, false);
+
+      // title band
+      const g = ctx.createLinearGradient(0, 0, 0, 56);
+      g.addColorStop(0, 'rgba(0,0,30,.92)');
+      g.addColorStop(0.7, 'rgba(0,0,30,.7)');
+      g.addColorStop(1, 'rgba(0,0,30,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, W, 56);
+      bars(ctx, 0, ['#a20', '#e40', '#f80', '#fb0', '#f80', '#e40', '#a20', '#600'], 1, 0, W);
+      logo(ctx, 'DRIFT KING', W / 2, 9, 3, 0);
+      drawText(ctx, 'TOP-DOWN DRIFT RACING', W / 2, 36, '#fff', { align: 'center', scale: 1, shadow: '#000' });
+
+      // bottom strip
+      ctx.fillStyle = 'rgba(0,0,30,.86)';
+      ctx.fillRect(0, H - 20, W, 20);
+      ctx.fillStyle = '#88d';
+      ctx.fillRect(0, H - 20, W, 1);
+      drawText(ctx, '25 TRACKS   BRIDGES   ONLINE DUEL   TRACK EDITOR', W / 2, H - 14, '#fd3', { align: 'center', shadow: '#000' });
+    </script>
+  </body>
+</html>

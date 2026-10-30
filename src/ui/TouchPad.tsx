@@ -7,6 +7,7 @@ const BUTTONS: { label: string; key: string; style: CSSProperties }[] = [
   { label: 'GAS', key: 'ArrowUp', style: { right: 10, bottom: 82 } },
   { label: 'BRAKE', key: 'ArrowDown', style: { right: 10, bottom: 12 } },
   { label: 'DRIFT', key: ' ', style: { right: 92, bottom: 12 } },
+  { label: 'RESET', key: 'r', style: { right: 92, bottom: 82, height: 40 } },
 ];
 
 const base: CSSProperties = {

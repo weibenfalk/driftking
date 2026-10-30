@@ -21,7 +21,7 @@ export interface PadReading {
   held: Record<Button, boolean>;
 }
 
-/** The pad as a race wants it: left stick or d-pad steers, RT/A gas, LT/B brake, X/RB handbrake. */
+/** The pad as a race wants it: left stick or d-pad steers, RT/A gas, LT/B brake, X/RB handbrake, Y puts the car back on the road. */
 export function readPad(): PadReading | null {
   const p = firstPad();
   if (!p) return null;
@@ -36,6 +36,7 @@ export function readPad(): PadReading | null {
     right: x > 0.3,
     a: b(2) || b(5) || b(4),
     b: false,
+    reset: b(3),
   };
   return { x, held };
 }

@@ -51,7 +51,7 @@ export default function Menu(p: Props) {
       items.forEach(([label], i) => button(ctx, label, (W - BTN_W) / 2, TOP + i * STEP, BTN_W, BTN_H, i === sel));
       text(ctx, 'UP DOWN SELECT   ENTER GO', W / 2, 165, C.dim, { align: 'center' });
       text(ctx, `${gold} GOLD   ${medals.length} TRACKS DRIVEN`, W / 2, 175, C.gold, { align: 'center' });
-      text(ctx, 'ARROWS STEER  SPACE HANDBRAKE  ESC LEAVES A RACE  M MUSIC', W / 2, 185, C.navy4, { align: 'center', small: true });
+      text(ctx, 'ARROWS STEER  SPACE HANDBRAKE  R RESPAWN  ESC LEAVES  M MUSIC', W / 2, 185, C.navy4, { align: 'center', small: true });
       const song = music.current();
       text(ctx, song.artist ? `MUSIC BY ${song.artist} - ${song.title}` : `MUSIC: ${song.title}`, W / 2, 193, C.cyan, { align: 'center', small: true });
     },

@@ -79,6 +79,10 @@ export interface View {
   lights?: number;
   /** Frames since a race was finished, for the chequered flag. */
   flag?: number;
+  /** The player is going the wrong way round: `ang` is the direction the track runs in (radians, screen space). */
+  wrongWay?: { ang: number };
+  /** A line of advice at the bottom of the screen. */
+  hint?: string;
   /** Replay mode: cinema bars and a label instead of the HUD. `cam` is the camera name index. */
   cinema?: { t: number; cam: number };
 }
@@ -183,6 +187,32 @@ export function createRenderer(ctx: CanvasRenderingContext2D, world: World) {
         ctx.fillRect(x - 2, y + 4, 2, 2);
       }
     }
+  }
+
+  /** A flashing red WRONG WAY sign with an arrow showing which way the track runs. */
+  function drawWrongWay(ang: number) {
+    const on = Math.floor(performance.now() / 280) % 2 === 0;
+    const w = textWidth('WRONG WAY', 2) + 14;
+    const x = Math.round((SW - w) / 2);
+    const y = BAR_H + 6;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(x - 1, y - 1, w + 2, 20);
+    ctx.fillStyle = on ? '#d21' : '#701';
+    ctx.fillRect(x, y, w, 18);
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(x, y, w, 1);
+    ctx.fillRect(x, y + 17, w, 1);
+    drawText(ctx, 'WRONG WAY', SW / 2, y + 2, '#fff', { align: 'center', scale: 2, shadow: '#000' });
+    const cx = SW / 2;
+    const cy = y + 34;
+    const dx = Math.cos(ang);
+    const dy = Math.sin(ang);
+    ctx.fillStyle = '#000';
+    ctx.fillRect(cx - 14, cy - 14, 28, 28);
+    ctx.fillStyle = on ? '#ffd23f' : '#a80';
+    for (let t = -9; t <= 6; t++) ctx.fillRect(Math.round(cx + dx * t) - 1, Math.round(cy + dy * t) - 1, 3, 3);
+    for (let k = 0; k <= 6; k++)
+      for (const side of [-1, 1]) ctx.fillRect(Math.round(cx + dx * (10 - k) - dy * side * k * 0.8) - 1, Math.round(cy + dy * (10 - k) + dx * side * k * 0.8) - 1, 2, 2);
   }
 
   /** Black bars top and bottom with a blinking REPLAY and the camera in use. */
@@ -367,6 +397,8 @@ export function createRenderer(ctx: CanvasRenderingContext2D, world: World) {
     else drawHud(v);
     if (v.lights !== undefined) drawLights(v.lights);
     if (v.flag !== undefined) drawFlag(v.flag);
+    if (v.wrongWay) drawWrongWay(v.wrongWay.ang);
+    if (v.hint && Math.floor(performance.now() / 350) % 3 !== 0) drawText(ctx, v.hint, SW / 2, SH - 12, '#ffd23f', { align: 'center', shadow: '#000' });
     if (popup) {
       drawText(ctx, popup.n, SW / 2, 24, popup.miss ? '#e4352b' : '#ffd23f', { align: 'center', scale: 3, shadow: '#000' });
       drawText(ctx, popup.l, SW / 2, 47, '#f2f0ea', { align: 'center', shadow: '#000' });

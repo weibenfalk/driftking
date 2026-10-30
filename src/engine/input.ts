@@ -5,9 +5,9 @@
  */
 import { padState, readPad } from './gamepad';
 
-export type Button = 'up' | 'down' | 'left' | 'right' | 'a' | 'b';
+export type Button = 'up' | 'down' | 'left' | 'right' | 'a' | 'b' | 'reset';
 
-export const BUTTONS: Button[] = ['up', 'down', 'left', 'right', 'a', 'b'];
+export const BUTTONS: Button[] = ['up', 'down', 'left', 'right', 'a', 'b', 'reset'];
 
 const KEYMAP: Record<string, Button> = {
   ArrowUp: 'up',
@@ -32,6 +32,8 @@ const KEYMAP: Record<string, Button> = {
   k: 'b',
   K: 'b',
   Shift: 'b',
+  r: 'reset',
+  R: 'reset',
 };
 
 export class Input {
