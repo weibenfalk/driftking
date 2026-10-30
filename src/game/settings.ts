@@ -31,9 +31,9 @@ export const DIFFICULTIES: Difficulty[] = ['easy', 'normal', 'hard'];
 
 /** What each difficulty changes: how fast the AI drives, and how much prize money pays. Medal targets stay the same. */
 export const DIFFICULTY: Record<Difficulty, { pace: number; prize: number }> = {
-  easy: { pace: 0.9, prize: 0.7 },
-  normal: { pace: 1, prize: 1 },
-  hard: { pace: 1.08, prize: 1.3 },
+  easy: { pace: 0.84, prize: 0.7 },
+  normal: { pace: 0.94, prize: 1 },
+  hard: { pace: 1.05, prize: 1.3 },
 };
 
 export const WEATHERS: WeatherSetting[] = ['auto', 'clear', 'rain', 'snow'];

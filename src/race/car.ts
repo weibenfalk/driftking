@@ -58,6 +58,8 @@ export interface Car {
   vr: number; // speed sideways (slip)
   steer: number;
   slide: boolean;
+  /** How far into the slide the tyres are, 0..1: grip eases in and out instead of snapping. */
+  sl: number;
   idx: number; // nearest centre-line sample
   lap: number;
   done: boolean;
@@ -294,6 +296,7 @@ function spawn(world: World, x: number, y: number, look: number, persona: Person
     vr: 0,
     steer: 0,
     slide: false,
+    sl: 0,
     idx: globalIdx(world, x, y),
     lap: 0,
     done: false,
@@ -351,7 +354,7 @@ export function drive(c: Car, inp: DriveInput, dt: number, env: Env) {
   const hz = HAZARD_GRIP[c.hazard];
   const boosted = c.boost > 0 ? 1 : 0;
   const slippery = (g: number) => 1 - (1 - g) * roadGrip * st.grip * hz; // scale how much sideways speed the tyres remove
-  c.steer += (inp.steer - c.steer) * Math.min(1, 0.28 * dt);
+  c.steer += (inp.steer - c.steer) * Math.min(1, 0.22 * dt);
   const sp = Math.abs(vf);
   let turn = (c.steer * 0.056 * Math.min(1, sp / 1.1) * (vf >= 0 ? 1 : -1)) / (1 + sp * 0.07);
   if (c.slide) turn *= 1 + 0.18 * st.drift;
@@ -368,17 +371,17 @@ export function drive(c: Car, inp: DriveInput, dt: number, env: Env) {
   if (inp.hand) vf *= Math.pow(0.986, dt);
   if (vf > maxF) vf -= (vf - maxF) * 0.05 * dt;
   const slip = Math.abs(vr);
-  if (!c.slide && (slip > 0.85 / st.drift || (inp.hand && sp > 1.4))) c.slide = true;
+  if (!c.slide && (slip > 0.95 / st.drift || (inp.hand && sp > 1.4) || (inp.brake && Math.abs(c.steer) > 0.5 && sp > 2.4))) c.slide = true;
   if (c.slide && slip < 0.28 && !inp.hand) c.slide = false;
-  let grip = slippery(c.slide ? (inp.gas ? 0.952 : 0.935) : 0.79);
-  if (inp.hand) grip = slippery(0.976);
+  c.sl += ((c.slide || inp.hand ? 1 : 0) - c.sl) * Math.min(1, (c.slide || inp.hand ? 0.3 : 0.09) * dt);
+  let grip = slippery(0.76 + ((inp.hand ? 0.976 : inp.gas ? 0.952 : 0.935) - 0.76) * c.sl);
   if (grass) grip = c.slide ? ground.slipGrip : ground.grip;
   const vr2 = vr * Math.pow(grip, dt);
   if (vf > 0) vf += Math.abs(vr - vr2) * (inp.gas ? 0.42 : 0.25);
   vr = vr2;
   if (c.slide && !inp.hand && vf > 0.6) {
     const va = Math.atan2(fy * vf + ry * vr, fx * vf + rx * vr);
-    c.a += wrapAngle(va - c.a) * 0.022 * dt;
+    c.a += wrapAngle(va - c.a) * (0.012 + 0.02 * (1 - Math.abs(c.steer))) * dt;
   }
   c.vx = fx * vf + rx * vr;
   c.vy = fy * vf + ry * vr;

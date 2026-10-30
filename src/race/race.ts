@@ -310,6 +310,7 @@ export function createGame(api: GameApi, track: Track, opts: GameOptions = {}): 
     c.vx = c.vy = c.vf = c.vr = 0;
     c.steer = 0;
     c.slide = false;
+    c.sl = 0;
     c.idx = safeIdx.get(c) ?? c.idx;
     if (human(c)) {
       lapValid = false;

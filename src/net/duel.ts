@@ -57,6 +57,7 @@ export function applyMotion(c: Car, w: WireCar) {
   c.vr = w[6];
   c.steer = w[7];
   c.slide = !!w[8];
+  c.sl = c.slide ? 1 : 0;
   c.boost = w[9];
   c.draft = w[10];
   c.lap = w[11];
