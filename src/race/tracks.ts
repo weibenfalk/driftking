@@ -190,6 +190,38 @@ export function generated(id: string, name: string, env: EnvId, seed: number, wi
   return fromEnv(id, name, env, width, height, cp, lakeSpot(cp, seed, o));
 }
 
+/** A hand-drawn track whose road crosses itself: at each crossing the stretch driven later goes over on a bridge. */
+function bridged(id: string, name: string, env: EnvId, cp: [number, number][]): Track {
+  const o: GenOpts = { width: 1700, height: 1100, roadHalf: envRoadHalf(env) };
+  return { ...fromEnv(id, name, env, 1700, 1100, cp, lakeSpot(cp, 5, o)), bridges: true };
+}
+
+/** A big lopsided eight across the dunes. */
+const OASIS_CP: [number, number][] = [
+  [1196, 886], [1333, 857], [1341, 610], [1363, 445], [1354, 279], [1233, 222], [1108, 331], [1000, 458], [895, 587], [787, 713], [667, 829],
+  [518, 896], [413, 782], [365, 623], [339, 459], [343, 293], [463, 232], [590, 339], [702, 462], [811, 588], [1000, 928], [1088, 909],
+];
+
+/** A trefoil knot: three bridges in one lap. */
+const KNOT_CP: [number, number][] = [
+  [603, 850], [472, 800], [530, 620], [635, 526], [770, 481], [912, 481], [1047, 527], [1156, 617], [1201, 749], [1127, 863], [987, 873],
+  [861, 809], [766, 704], [709, 573], [697, 432], [741, 298], [856, 220], [982, 274], [1034, 404], [1023, 546], [965, 675], [790, 921], [706, 889],
+];
+
+/** A big oval with a loop inside it: the way in goes under the way out. */
+const LOOP_CP: [number, number][] = [
+  [386, 608], [363, 409], [484, 380], [588, 304], [706, 253], [832, 224], [960, 218], [1087, 237], [1205, 288], [1287, 385], [1270, 508],
+  [1170, 586], [1044, 608], [943, 543], [1027, 457], [1154, 449], [1269, 502], [1314, 618], [1257, 731], [1154, 808], [1035, 855], [908, 879],
+  [779, 880], [653, 858], [417, 876], [402, 747],
+];
+
+/** Another trefoil, lying on its side between the towers. */
+const FLYOVER_CP: [number, number][] = [
+  [1110, 827], [1022, 936], [908, 841], [834, 757], [793, 652], [782, 540], [802, 428], [853, 328], [934, 250], [1042, 224], [1134, 282],
+  [1156, 391], [1120, 498], [1050, 586], [957, 651], [851, 689], [739, 696], [631, 664], [554, 584], [559, 475], [642, 402], [753, 380],
+  [864, 396], [966, 444], [1053, 517], [1236, 672], [1180, 742],
+];
+
 /** A figure eight with a start straight on the right; the editor's `8` key starts from it. */
 export const EIGHT_CP: [number, number][] = [
   [1480, 520], [1480, 720], [1440, 850], [1300, 925], [1130, 905], [1010, 820], [930, 700], [880, 600], [800, 440], [700, 300],
@@ -210,21 +242,10 @@ export const TRACKS: Track[] = [
     ],
     { x: 1000, y: 640, rx: 105, ry: 62 },
   ),
-  {
-    // a figure eight: the road crosses itself in the middle, the second pass going over a bridge
-    ...fromEnv(
-      'figure-eight',
-      'FIGURE EIGHT',
-      'meadow',
-      1700,
-      1100,
-      EIGHT_CP,
-      undefined,
-    ),
-    bridges: true,
-  },
+  bridged('figure-eight', 'FIGURE EIGHT', 'meadow', EIGHT_CP),
   generated('lakeside', 'LAKESIDE', 'meadow', 11),
   generated('hills', 'ROLLING HILLS', 'meadow', 23),
+  generated('orchard', 'ORCHARD', 'meadow', 37),
   fromEnv(
     'dunes',
     'DUNE RUN',
@@ -239,16 +260,23 @@ export const TRACKS: Track[] = [
   ),
   generated('canyon', 'CANYON', 'desert', 31),
   generated('mirage', 'MIRAGE', 'desert', 47),
+  bridged('oasis-eight', 'OASIS EIGHT', 'desert', OASIS_CP),
+  generated('sandstorm', 'SANDSTORM', 'desert', 71),
   generated('pine-ridge', 'PINE RIDGE', 'forest', 5),
   generated('mud-creek', 'MUD CREEK', 'forest', 17),
   generated('deep-woods', 'DEEP WOODS', 'forest', 59),
+  bridged('the-knot', 'THE KNOT', 'forest', KNOT_CP),
+  generated('hollow', 'HOLLOW', 'forest', 97),
   generated('ice-pass', 'ICE PASS', 'snow', 3),
   generated('frostbite', 'FROSTBITE', 'snow', 41),
   generated('whiteout', 'WHITEOUT', 'snow', 73),
+  bridged('loop-the-loop', 'LOOP THE LOOP', 'snow', LOOP_CP),
+  generated('glacier', 'GLACIER', 'snow', 19),
   generated('downtown', 'DOWNTOWN', 'city', 13),
   generated('harbor', 'HARBOR', 'city', 29),
   generated('neon-alley', 'NEON ALLEY', 'city', 61),
   generated('skyline', 'SKYLINE', 'city', 83),
+  bridged('flyovers', 'FLYOVERS', 'city', FLYOVER_CP),
 ];
 
 /** Everyone gets the same track on the same (UTC) day. */
