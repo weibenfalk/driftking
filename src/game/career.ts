@@ -10,10 +10,11 @@ export interface Cup {
 }
 
 export const CUPS: Cup[] = [
-  { id: 'meadow', name: 'MEADOW CUP', trackIds: ['meadow', 'lakeside', 'hills', 'dunes'] },
-  { id: 'dust', name: 'DUST CUP', trackIds: ['canyon', 'mirage', 'pine-ridge', 'mud-creek'] },
-  { id: 'frost', name: 'FROST CUP', trackIds: ['deep-woods', 'ice-pass', 'frostbite', 'whiteout'] },
-  { id: 'city', name: 'CITY CUP', trackIds: ['downtown', 'harbor', 'neon-alley', 'skyline'] },
+  { id: 'meadow', name: 'MEADOW CUP', trackIds: ['meadow', 'lakeside', 'orchard', 'hills', 'figure-eight'] },
+  { id: 'desert', name: 'DESERT CUP', trackIds: ['dunes', 'canyon', 'mirage', 'sandstorm', 'oasis-eight'] },
+  { id: 'forest', name: 'FOREST CUP', trackIds: ['pine-ridge', 'mud-creek', 'hollow', 'deep-woods', 'the-knot'] },
+  { id: 'frost', name: 'FROST CUP', trackIds: ['ice-pass', 'frostbite', 'glacier', 'whiteout', 'loop-the-loop'] },
+  { id: 'city', name: 'CITY CUP', trackIds: ['downtown', 'harbor', 'neon-alley', 'skyline', 'flyovers'] },
 ];
 
 /**
@@ -27,7 +28,7 @@ export function careerPace(trackId: string): number {
   return i < 0 ? 1 : 0.92 + (i / (all.length - 1)) * 0.19;
 }
 
-/** Prize money grows with the cup (1.0, 1.15, 1.3, 1.45), so the harder cups pay for the better cars. Other tracks: 1. */
+/** Prize money grows with the cup (1.0, 1.15, 1.3, 1.45, 1.6), so the harder cups pay for the better cars. Other tracks: 1. */
 export function careerPrize(trackId: string): number {
   const i = CUPS.findIndex((c) => c.trackIds.includes(trackId));
   return i < 0 ? 1 : 1 + i * 0.15;
@@ -35,8 +36,11 @@ export function careerPrize(trackId: string): number {
 
 export const MEDAL_NAMES = ['NO MEDAL', 'BRONZE', 'SILVER', 'GOLD'];
 
-/** Points (bronze 1, silver 2, gold 3) needed in a cup to open the next one. Max per cup is 12. */
-export const UNLOCK_POINTS = 5;
+/** Points (bronze 1, silver 2, gold 3) needed in a cup to open the next one. */
+export const UNLOCK_POINTS = 6;
+
+/** Most points a cup can give: gold on every track. */
+export const CUP_MAX = 15;
 
 /*
  * Medal targets are fractions of the track's baseline-profile time (`parTime`) plus a standing-start allowance,
@@ -57,6 +61,8 @@ const TUNE: Record<string, number> = {
   canyon: 1, mirage: 1.04, 'pine-ridge': 0.95, 'mud-creek': 0.935,
   'deep-woods': 0.94, 'ice-pass': 0.86, frostbite: 0.88, whiteout: 0.875,
   downtown: 1.035, harbor: 1.035, 'neon-alley': 1.045, skyline: 1.04,
+  orchard: 1.03, 'figure-eight': 1, sandstorm: 1.02, 'oasis-eight': 1.02, hollow: 0.95,
+  'the-knot': 0.9, glacier: 0.845, 'loop-the-loop': 0.845, flyovers: 1.01,
 };
 const tunedPar = (track: Track) => parTime(track) * (TUNE[track.id] ?? 1);
 

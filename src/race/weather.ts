@@ -13,7 +13,8 @@ interface Drop {
 }
 
 /**
- * Weather and light drawn over the finished frame (before the HUD): falling rain or snow, a warm tint at dusk, and at
+ * Weather and light drawn over the finished frame (before the HUD): falling rain or snow, a sandstorm blowing across, a
+ * warm tint at dusk, and at
  * night a dark mask with banded headlight cones punched out of it. Purely visual; nothing here affects driving.
  */
 export class Weather {
@@ -32,10 +33,10 @@ export class Weather {
 
   private reset(kind: Conditions['weather']) {
     this.kind = kind;
-    const n = kind === 'rain' ? 110 : kind === 'snow' ? 130 : 0;
+    const n = kind === 'rain' ? 110 : kind === 'snow' ? 130 : kind === 'sand' ? 250 : 0;
     this.drops = Array.from({ length: n }, (_, i) => {
       const h = Math.imul(i + 7, 2654435761) >>> 0;
-      return { x: h % SW, y: (h >>> 10) % SH, speed: kind === 'rain' ? 190 + (h % 60) : 24 + (h % 20), phase: (h >>> 20) % 100 };
+      return { x: h % SW, y: (h >>> 10) % SH, speed: kind === 'rain' ? 190 + (h % 60) : kind === 'sand' ? 150 + (h % 120) : 24 + (h % 20), phase: (h >>> 20) % 100 };
     });
   }
 
@@ -58,6 +59,23 @@ export class Weather {
         ctx.fillRect(x, y, 1, 2);
         ctx.fillRect(x - 1, y + 2, 1, 2); // slanted streak
       }
+    } else if (kind === 'sand') {
+      // grains and streaks driven along by the wind, some faster than others
+      const gust = 1 + Math.sin(now / 1300) * 0.25;
+      for (const d of this.drops) {
+        d.x += d.speed * gust * dt;
+        d.y += 18 * dt;
+        if (d.x > SW) {
+          d.x -= SW + 12;
+          d.y = (d.y + 53) % SH;
+        }
+        if (d.y > SH) d.y -= SH;
+        const x = Math.floor(d.x);
+        const y = Math.floor(d.y);
+        const fast = d.speed > 230;
+        ctx.fillStyle = d.phase % 3 === 0 ? '#fed' : d.phase % 3 === 1 ? '#ec9' : '#da7';
+        ctx.fillRect(x, y, fast ? 4 : d.phase % 2 ? 2 : 1, 1);
+      }
     } else if (kind === 'snow') {
       ctx.fillStyle = '#fff';
       for (const d of this.drops) {
@@ -67,6 +85,25 @@ export class Weather {
         const big = d.phase % 3 === 0;
         ctx.fillRect(((x % SW) + SW) % SW, Math.floor(d.y), big ? 2 : 1, big ? 2 : 1);
       }
+    }
+  }
+
+  /** Sandstorm haze: a warm veil that swells and fades with the gusts, bands of denser dust sweeping across, thick at the edges. */
+  private haze(ctx: CanvasRenderingContext2D, now: number) {
+    const gust = 0.5 + 0.5 * Math.sin(now / 2100);
+    ctx.fillStyle = `rgba(222,176,100,${0.2 + gust * 0.12})`;
+    ctx.fillRect(0, 0, SW, SH);
+    for (let k = 0; k < 4; k++) {
+      const y = ((now / 40 + k * 61) % (SH + 40)) - 40;
+      ctx.fillStyle = 'rgba(232,190,116,.13)';
+      ctx.fillRect(0, Math.floor(y), SW, 14 + k * 4);
+    }
+    ctx.fillStyle = 'rgba(214,160,84,.14)';
+    for (const t of [56, 40, 26, 12]) {
+      ctx.fillRect(0, 0, SW, t);
+      ctx.fillRect(0, SH - t, SW, t);
+      ctx.fillRect(0, t, t, SH - 2 * t);
+      ctx.fillRect(SW - t, t, t, SH - 2 * t);
     }
   }
 
@@ -119,6 +156,7 @@ export class Weather {
       ctx.fillRect(0, 0, SW, SH);
       ctx.globalCompositeOperation = 'source-over';
     }
+    if (cond.weather === 'sand') this.haze(ctx, now);
     if (cond.time === 'dusk') {
       ctx.globalCompositeOperation = 'multiply';
       ctx.fillStyle = '#fb9';

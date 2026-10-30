@@ -7,7 +7,7 @@ const KEY = 'driftking.settings.v1';
  */
 const VERSION = 2;
 
-export type WeatherSetting = 'auto' | 'clear' | 'rain' | 'snow';
+export type WeatherSetting = 'auto' | 'clear' | 'rain' | 'snow' | 'sand';
 export type TimeSetting = 'auto' | 'day' | 'dusk' | 'night';
 export type Difficulty = 'easy' | 'normal' | 'hard';
 
@@ -36,7 +36,7 @@ export const DIFFICULTY: Record<Difficulty, { pace: number; prize: number }> = {
   hard: { pace: 1.05, prize: 1.3 },
 };
 
-export const WEATHERS: WeatherSetting[] = ['auto', 'clear', 'rain', 'snow'];
+export const WEATHERS: WeatherSetting[] = ['auto', 'clear', 'rain', 'snow', 'sand'];
 export const TIMES: TimeSetting[] = ['auto', 'day', 'dusk', 'night'];
 
 /** Reads settings, keeping only values that are valid. */

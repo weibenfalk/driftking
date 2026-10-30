@@ -1,9 +1,9 @@
 import type { Settings } from '../game/settings';
 import type { Track } from './track';
 
-/** What the weather and light are doing. The light is purely visual; rain and snow also cost grip (see `weatherGrip`). */
+/** What the weather and light are doing. The light is purely visual; rain, snow and sand also cost grip (see `weatherGrip`). */
 export interface Conditions {
-  weather: 'clear' | 'rain' | 'snow';
+  weather: 'clear' | 'rain' | 'snow' | 'sand';
   time: 'day' | 'dusk' | 'night';
 }
 
@@ -15,6 +15,9 @@ const MOODS: Record<string, Conditions> = {
   'mud-creek': { weather: 'rain', time: 'dusk' },
   'deep-woods': { weather: 'clear', time: 'night' },
   mirage: { weather: 'clear', time: 'dusk' },
+  canyon: { weather: 'sand', time: 'day' },
+  sandstorm: { weather: 'sand', time: 'day' },
+  'oasis-eight': { weather: 'sand', time: 'dusk' },
   meadow: { weather: 'clear', time: 'day' },
 };
 
@@ -33,11 +36,13 @@ export function autoConditions(track: Track): Conditions {
 
 /**
  * Grip left on the road in this weather, as a multiplier on the track's own grip: rain makes the asphalt greasy and snow
- * on a track that isn't a snow track is worse still. Snow tracks already have their low grip built in.
+ * on a track that isn't a snow track is worse still, and blown sand is a little loose on tarmac. Snow tracks already have
+ * their low grip built in.
  */
 export function weatherGrip(track: Pick<Track, 'env'>, weather: Conditions['weather']): number {
   if (weather === 'rain') return 0.9;
   if (weather === 'snow') return track.env === 'SNOW' ? 1 : 0.86;
+  if (weather === 'sand') return 0.95;
   return 1;
 }
 
