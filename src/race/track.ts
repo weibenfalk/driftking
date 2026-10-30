@@ -39,6 +39,8 @@ export interface Theme {
 
 export interface Props {
   count: number;
+  /** Dense scenery (forest): props may stand close together; only the road and water keep their wide berth. */
+  dense?: boolean;
   /** What to scatter and how often (relative weights). */
   mix: [PropStyle, number][];
 }

@@ -485,27 +485,32 @@ function plantProps(px: Pix, track: Track, rng: () => number): Tree[] {
     for (const [style, w] of props.mix) if ((t -= w) <= 0) return style;
     return props.mix[0][0];
   };
-  const isClear = (x: number, y: number, r: number) => {
+  const dense = !!props.dense;
+  // `r` is how far from the road and water it must stay; in dense scenery other props only count right under the new one
+  const isClear = (x: number, y: number, r: number, inner: number) => {
     for (let dy = -r; dy <= r; dy += 3)
       for (let dx = -r; dx <= r; dx += 3) {
         const X = Math.floor(x + dx);
         const Y = Math.floor(y + dy);
         if (X < 4 || Y < 4 || X >= W - 4 || Y >= H - 4) return false;
-        if (px.surf[Y * W + X] !== GRASS) return false;
+        const v = px.surf[Y * W + X];
+        if (v === GRASS) continue;
+        if (dense && v === SOLID && (Math.abs(dx) > inner || Math.abs(dy) > inner)) continue;
+        return false;
       }
     return true;
   };
   let tries = 0;
   let count = 0;
-  while (count < props.count && tries++ < 6000) {
+  while (count < props.count && tries++ < Math.max(6000, props.count * 40)) {
     const style = pick();
     const [lo, hi] = SIZE[style];
     const r = Math.round(lo + rng() * (hi - lo));
     const x = Math.round(10 + rng() * (W - 20));
     const y = Math.round(10 + rng() * (H - 20));
-    const margin = style === 'building' ? r + 14 : r + (style === 'bush' ? 8 : 14);
-    if (!isClear(x, y, margin)) continue;
-    if (placed.some((p) => Math.hypot(p.x - x, p.y - y) < p.r + r + (style === 'building' ? 10 : 5))) continue;
+    const margin = style === 'building' ? r + 14 : r + (style === 'bush' ? 8 : dense ? 10 : 14);
+    if (!isClear(x, y, margin, r + 2)) continue;
+    if (placed.some((p) => Math.hypot(p.x - x, p.y - y) < p.r + r + (style === 'building' ? 10 : dense ? 1 : 5))) continue;
     placed.push({ x, y, r });
     count++;
     if (style === 'building') {

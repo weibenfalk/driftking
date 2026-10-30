@@ -416,8 +416,9 @@ export function moveCar(c: Car, dt: number, env: Env) {
   for (const t of world.trees) {
     const dx = c.x - t.x;
     const dy = c.y - t.y;
-    const d = Math.hypot(dx, dy);
     const m = t.r + 5;
+    if (dx > m || dx < -m || dy > m || dy < -m) continue; // (most trees are nowhere near: skip the square root)
+    const d = Math.hypot(dx, dy);
     if (d < m && d > 0) {
       const nx = dx / d;
       const ny = dy / d;

@@ -89,7 +89,7 @@ const FOREST: Env = {
   },
   ground: 'mud',
   roadGrip: 0.78,
-  props: { count: 170, mix: [['pine', 6], ['tree', 4], ['bush', 2], ['rock', 1]] },
+  props: { count: 1500, dense: true, mix: [['pine', 6], ['tree', 4], ['bush', 3], ['rock', 1]] },
   laps: 3,
   halfWidth: 26,
   cornerExtra: 18,
